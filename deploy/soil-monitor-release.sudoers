@@ -1,0 +1,26 @@
+# Install as /etc/sudoers.d/soil-monitor-release with owner root:root and mode 0440.
+# This policy matches the default paths in scripts/release.sh. Update both files
+# together if the service name, staging directory, or destinations change.
+
+Cmnd_Alias SOIL_RELEASE_PREFLIGHT = /usr/bin/true
+
+Cmnd_Alias SOIL_RELEASE_ENVIRONMENT = \
+    /usr/bin/test -r /etc/soil-monitor/soil-monitor.env
+
+Cmnd_Alias SOIL_RELEASE_FILES = \
+    /usr/bin/cp -p -- /usr/local/bin/soil-monitor /usr/local/bin/soil-monitor.previous, \
+    /usr/bin/cp -p -- /etc/systemd/system/soil-monitor.service /etc/systemd/system/soil-monitor.service.previous, \
+    /usr/bin/install -o root -g root -m 0755 /tmp/soil-monitor-release/soil-monitor /usr/local/bin/soil-monitor, \
+    /usr/bin/install -o root -g root -m 0644 /tmp/soil-monitor-release/soil-monitor.service /etc/systemd/system/soil-monitor.service, \
+    /usr/bin/install -o root -g root -m 0755 /usr/local/bin/soil-monitor.previous /usr/local/bin/soil-monitor, \
+    /usr/bin/install -o root -g root -m 0644 /etc/systemd/system/soil-monitor.service.previous /etc/systemd/system/soil-monitor.service
+
+Cmnd_Alias SOIL_RELEASE_SERVICE = \
+    /usr/bin/systemctl daemon-reload, \
+    /usr/bin/systemctl restart soil-monitor.service, \
+    /usr/bin/systemctl is-active --quiet soil-monitor.service, \
+    /usr/bin/systemctl status --no-pager --full soil-monitor.service, \
+    /usr/bin/journalctl -u soil-monitor.service -n 50 --no-pager
+
+brooks ALL=(root) NOPASSWD: SOIL_RELEASE_PREFLIGHT, SOIL_RELEASE_FILES, SOIL_RELEASE_SERVICE
+brooks ALL=(soilmonitor) NOPASSWD: SOIL_RELEASE_ENVIRONMENT

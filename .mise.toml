@@ -1,0 +1,42 @@
+[tools]
+go = "1.25"
+shellcheck = "0.11.0"
+
+[tasks.default]
+description = "List available project tasks"
+run = "mise tasks"
+
+[tasks.build]
+description = "Build the soil monitor for the local platform"
+run = "go build -o build/soil-monitor ./cmd/soil-monitor"
+
+[tasks.build-pi]
+description = "Build a static Linux ARM64 binary for the Raspberry Pi"
+env = { GOOS = "linux", GOARCH = "arm64", CGO_ENABLED = "0" }
+run = "go build -trimpath -o build/soil-monitor-linux-arm64 ./cmd/soil-monitor"
+
+[tasks.test]
+description = "Run Go, release, and bootstrap workflow tests"
+run = ["go test ./...", "./scripts/release_test.sh", "./scripts/bootstrap_test.sh"]
+
+[tasks.fmt]
+description = "Format Go source files"
+run = "gofmt -w $(find . -name '*.go' -not -path './openspec/*')"
+
+[tasks.vet]
+description = "Run Go static analysis"
+run = "go vet ./..."
+
+[tasks.lint-shell]
+description = "Lint repository shell scripts"
+run = "shellcheck scripts/*.sh"
+
+[tasks.release]
+description = "Validate, build, and release to the Raspberry Pi"
+depends = ["test", "vet", "lint-shell", "build-pi"]
+run = "./scripts/release.sh"
+
+[tasks.bootstrap]
+description = "Provision a fresh Raspberry Pi and release the complete appliance"
+depends = ["test", "vet", "lint-shell", "build-pi"]
+run = "./scripts/bootstrap.sh"
