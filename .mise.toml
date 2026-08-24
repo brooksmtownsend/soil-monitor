@@ -1,5 +1,6 @@
 [tools]
 go = "1.25"
+"npm:@fission-ai/openspec" = "latest"
 pipx = "latest"
 "pipx:esptool" = "latest"
 python = "3.12"
