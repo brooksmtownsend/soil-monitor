@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -20,29 +21,36 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(logger); err != nil {
+	if err := run(logger, os.Args[1:], os.Environ(), os.Stderr); err != nil {
+		if config.IsHelp(err) {
+			return
+		}
 		logger.Error("soil monitor stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.FromEnv()
+func run(logger *slog.Logger, args, environ []string, output io.Writer) error {
+	cfg, err := config.Load(args, environ, output)
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}
-	if _, err := host.Init(); err != nil {
-		return fmt.Errorf("initialize Raspberry Pi hardware: %w", err)
-	}
 
-	displayAdapter, err := hardware.NewSH1106(cfg.SPIPort)
-	if err != nil {
-		return fmt.Errorf("display initialization: %w", err)
-	}
-	buttons, err := hardware.NewButtons(cfg.Debounce)
-	if err != nil {
-		_ = displayAdapter.Close()
-		return fmt.Errorf("button initialization: %w", err)
+	var displayAdapter core.Display
+	var buttons core.ButtonSource
+	if cfg.PIHatEnabled {
+		if _, err := host.Init(); err != nil {
+			return fmt.Errorf("initialize Raspberry Pi hardware: %w", err)
+		}
+		displayAdapter, err = hardware.NewSH1106(cfg.SPIPort)
+		if err != nil {
+			return fmt.Errorf("display initialization: %w", err)
+		}
+		buttons, err = hardware.NewButtons(cfg.Debounce)
+		if err != nil {
+			_ = displayAdapter.Close()
+			return fmt.Errorf("button initialization: %w", err)
+		}
 	}
 
 	definitions := make([]core.PlantDefinition, len(cfg.Plants))
@@ -51,15 +59,16 @@ func run(logger *slog.Logger) error {
 	}
 	state, err := core.NewState(definitions)
 	if err != nil {
-		_ = buttons.Close()
-		_ = displayAdapter.Close()
+		closeHardware(buttons, displayAdapter)
 		return fmt.Errorf("initialize plant state: %w", err)
 	}
-	webAdapter, err := webdisplay.New(cfg.HTTPAddr, state)
-	if err != nil {
-		_ = buttons.Close()
-		_ = displayAdapter.Close()
-		return fmt.Errorf("initialize web display: %w", err)
+	var webAdapter core.WebServer
+	if cfg.HTTPEnabled {
+		webAdapter, err = webdisplay.New(cfg.HTTPAddr, state)
+		if err != nil {
+			closeHardware(buttons, displayAdapter)
+			return fmt.Errorf("initialize web display: %w", err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -73,4 +82,13 @@ func run(logger *slog.Logger) error {
 		Logger:  logger,
 	}
 	return runner.Run(ctx)
+}
+
+func closeHardware(buttons core.ButtonSource, displayAdapter core.Display) {
+	if buttons != nil {
+		_ = buttons.Close()
+	}
+	if displayAdapter != nil {
+		_ = displayAdapter.Close()
+	}
 }

@@ -13,6 +13,7 @@ readonly DISCONNECT_ATTEMPTS="${SOIL_BOOTSTRAP_DISCONNECT_ATTEMPTS-15}"
 readonly RECONNECT_ATTEMPTS="${SOIL_BOOTSTRAP_RECONNECT_ATTEMPTS-60}"
 readonly WAIT_DELAY="${SOIL_BOOTSTRAP_WAIT_SECONDS-2}"
 readonly DRY_RUN="${SOIL_BOOTSTRAP_DRY_RUN-0}"
+PI_HAT_ENABLED="${SOIL_BOOTSTRAP_PI_HAT_ENABLED-true}"
 readonly REMOTE_BOOTSTRAP_SCRIPT="${SOIL_BOOTSTRAP_REMOTE_SCRIPT-$SCRIPT_DIR/bootstrap-pi.sh}"
 readonly ENVIRONMENT_EXAMPLE="${SOIL_BOOTSTRAP_ENVIRONMENT_EXAMPLE-$REPO_ROOT/deploy/soil-monitor.env.example}"
 readonly MOSQUITTO_CONFIG="${SOIL_BOOTSTRAP_MOSQUITTO_CONFIG-$REPO_ROOT/deploy/soil-monitor-mosquitto.conf}"
@@ -56,13 +57,27 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required local command '$1' was not found"
 }
 
+for argument in "$@"; do
+  case "$argument" in
+    --pi-hat=true) PI_HAT_ENABLED=true ;;
+    --pi-hat=false) PI_HAT_ENABLED=false ;;
+    --pi-hat) die "--pi-hat requires an explicit true or false value" ;;
+    *) die "unknown bootstrap argument: $argument" ;;
+  esac
+done
+readonly PI_HAT_ENABLED
+
 validate_target "$TARGET"
 validate_absolute_path SOIL_BOOTSTRAP_STAGE_DIR "$STAGE"
-validate_absolute_path SOIL_BOOTSTRAP_SPI_PORT "$SPI_PORT"
+if [[ "$PI_HAT_ENABLED" == "true" ]]; then
+  validate_absolute_path SOIL_BOOTSTRAP_SPI_PORT "$SPI_PORT"
+fi
 validate_positive_integer SOIL_BOOTSTRAP_DISCONNECT_ATTEMPTS "$DISCONNECT_ATTEMPTS"
 validate_positive_integer SOIL_BOOTSTRAP_RECONNECT_ATTEMPTS "$RECONNECT_ATTEMPTS"
 validate_nonnegative_integer SOIL_BOOTSTRAP_WAIT_SECONDS "$WAIT_DELAY"
 [[ "$DRY_RUN" == "0" || "$DRY_RUN" == "1" ]] || die "SOIL_BOOTSTRAP_DRY_RUN must be 0 or 1"
+[[ "$PI_HAT_ENABLED" == "true" || "$PI_HAT_ENABLED" == "false" ]] ||
+  die "SOIL_BOOTSTRAP_PI_HAT_ENABLED must be true or false"
 
 for command_name in ssh scp sleep; do
   require_command "$command_name"
@@ -79,9 +94,15 @@ printf '  Target:               %s\n' "$TARGET"
 printf '  Remote staging:       %s\n' "$STAGE"
 printf '  Initial MQTT broker:  tcp://127.0.0.1:1883\n'
 printf '  MQTT LAN listener:    1883 (anonymous, trusted LAN only)\n'
-printf '  SPI device:           %s\n' "$SPI_PORT"
+printf '  Pi HAT enabled:       %s\n' "$PI_HAT_ENABLED"
+printf '  Remote architecture: detected during release (ARM64 or AMD64)\n'
 printf '  Existing environment: preserved\n'
-printf '  Reboot:               only if SPI is not active\n'
+if [[ "$PI_HAT_ENABLED" == "true" ]]; then
+  printf '  SPI device:           %s\n' "$SPI_PORT"
+  printf '  Reboot:               only if SPI is not active\n'
+else
+  printf '  Hardware setup:       omitted for generic Debian mode\n'
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
   printf 'Dry run complete: SSH, provisioning, reboot, and release were skipped.\n'
@@ -108,39 +129,41 @@ scp "${SSH_OPTIONS[@]}" -- "$MOSQUITTO_CONFIG" "$TARGET:$STAGE/soil-monitor-mosq
 scp "${SSH_OPTIONS[@]}" -- "$UNIT" "$TARGET:$STAGE/soil-monitor.service" || die "could not stage systemd unit"
 scp "${SSH_OPTIONS[@]}" -- "$SUDOERS_POLICY" "$TARGET:$STAGE/soil-monitor-release.sudoers" || die "could not stage release sudo policy"
 
-printf 'Running privileged Raspberry Pi bootstrap; sudo may prompt once...\n'
-ssh -tt "${SSH_OPTIONS[@]}" "$TARGET" sudo sh "$STAGE/bootstrap-pi.sh" "$STAGE" "$RELEASE_USER" ||
+printf 'Running privileged Debian host bootstrap; sudo may prompt once...\n'
+ssh -tt "${SSH_OPTIONS[@]}" "$TARGET" sudo sh "$STAGE/bootstrap-pi.sh" "$STAGE" "$RELEASE_USER" "$PI_HAT_ENABLED" ||
   die "remote bootstrap failed; review its last diagnostic and rerun bootstrap after correcting it"
 
-if ssh "${SSH_OPTIONS[@]}" "$TARGET" test -e "$SPI_PORT"; then
-  printf 'SPI is already active; reboot skipped.\n'
-else
-  printf 'SPI is not active in the running kernel; rebooting %s...\n' "$TARGET"
-  ssh -tt "${SSH_OPTIONS[@]}" "$TARGET" sudo systemctl reboot || true
+if [[ "$PI_HAT_ENABLED" == "true" ]]; then
+  if ssh "${SSH_OPTIONS[@]}" "$TARGET" test -e "$SPI_PORT"; then
+    printf 'SPI is already active; reboot skipped.\n'
+  else
+    printf 'SPI is not active in the running kernel; rebooting %s...\n' "$TARGET"
+    ssh -tt "${SSH_OPTIONS[@]}" "$TARGET" sudo systemctl reboot || true
 
-  disconnected=0
-  for ((attempt = 1; attempt <= DISCONNECT_ATTEMPTS; attempt++)); do
-    if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true >/dev/null 2>&1; then
-      disconnected=1
-      break
-    fi
-    sleep "$WAIT_DELAY"
-  done
-  [[ "$disconnected" -eq 1 ]] || die "the Pi did not disconnect for reboot within the configured timeout"
+    disconnected=0
+    for ((attempt = 1; attempt <= DISCONNECT_ATTEMPTS; attempt++)); do
+      if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true >/dev/null 2>&1; then
+        disconnected=1
+        break
+      fi
+      sleep "$WAIT_DELAY"
+    done
+    [[ "$disconnected" -eq 1 ]] || die "the Pi did not disconnect for reboot within the configured timeout"
 
-  reconnected=0
-  for ((attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++)); do
-    if ssh "${SSH_OPTIONS[@]}" "$TARGET" true >/dev/null 2>&1; then
-      reconnected=1
-      break
-    fi
-    sleep "$WAIT_DELAY"
-  done
-  [[ "$reconnected" -eq 1 ]] || die "the Pi did not return over SSH after reboot; inspect Wi-Fi or the image locally"
+    reconnected=0
+    for ((attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++)); do
+      if ssh "${SSH_OPTIONS[@]}" "$TARGET" true >/dev/null 2>&1; then
+        reconnected=1
+        break
+      fi
+      sleep "$WAIT_DELAY"
+    done
+    [[ "$reconnected" -eq 1 ]] || die "the Pi did not return over SSH after reboot; inspect Wi-Fi or the image locally"
+  fi
+
+  ssh "${SSH_OPTIONS[@]}" "$TARGET" test -e "$SPI_PORT" ||
+    die "SPI device $SPI_PORT is still missing after bootstrap and reboot"
 fi
-
-ssh "${SSH_OPTIONS[@]}" "$TARGET" test -e "$SPI_PORT" ||
-  die "SPI device $SPI_PORT is still missing after bootstrap and reboot"
 
 printf 'Running the existing guarded application release...\n'
 SOIL_RELEASE_TARGET="$TARGET" "$RELEASE_SCRIPT" || die "application release failed after host bootstrap"

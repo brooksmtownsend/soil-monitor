@@ -2,7 +2,8 @@
 # This policy matches the default paths in scripts/release.sh. Update both files
 # together if the service name, staging directory, or destinations change.
 
-Cmnd_Alias SOIL_RELEASE_PREFLIGHT = /usr/bin/true
+Cmnd_Alias SOIL_RELEASE_PREFLIGHT = /usr/bin/true, \
+    /usr/bin/test -e /etc/soil-monitor/soil-monitor.env
 
 Cmnd_Alias SOIL_RELEASE_ENVIRONMENT = \
     /usr/bin/test -r /etc/soil-monitor/soil-monitor.env

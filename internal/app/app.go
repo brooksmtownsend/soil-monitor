@@ -19,14 +19,17 @@ type Runner struct {
 }
 
 func (r *Runner) Run(ctx context.Context) (runErr error) {
-	if r.State == nil || r.Display == nil || r.Buttons == nil || r.MQTT == nil || r.Web == nil {
-		return fmt.Errorf("state, display, buttons, MQTT, and web adapters are required")
+	if r.State == nil || r.MQTT == nil {
+		return fmt.Errorf("state and MQTT adapters are required")
+	}
+	if (r.Display == nil) != (r.Buttons == nil) {
+		return fmt.Errorf("display and buttons must either both be configured or both be omitted")
 	}
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	webErrors := make(chan error, 1)
+	var webErrors chan error
 	webStarted := false
 	webFinished := false
 	defer func() {
@@ -36,21 +39,35 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 				runErr = errors.Join(runErr, fmt.Errorf("stop web server: %w", webErr))
 			}
 		}
-		runErr = errors.Join(runErr, r.MQTT.Close(), r.Buttons.Close(), r.Display.Close())
+		runErr = errors.Join(runErr, r.MQTT.Close())
+		if r.Buttons != nil {
+			runErr = errors.Join(runErr, r.Buttons.Close())
+		}
+		if r.Display != nil {
+			runErr = errors.Join(runErr, r.Display.Close())
+		}
 	}()
 
-	if err := r.Display.Render(r.State.View()); err != nil {
-		return fmt.Errorf("render startup view: %w", err)
+	if r.Display != nil {
+		if err := r.Display.Render(r.State.View()); err != nil {
+			return fmt.Errorf("render startup view: %w", err)
+		}
 	}
 	if err := r.MQTT.Start(runCtx); err != nil {
 		return fmt.Errorf("start MQTT: %w", err)
 	}
-	go func() {
-		webErrors <- r.Web.Run(runCtx)
-	}()
-	webStarted = true
+	if r.Web != nil {
+		webErrors = make(chan error, 1)
+		go func() {
+			webErrors <- r.Web.Run(runCtx)
+		}()
+		webStarted = true
+	}
 
-	buttonEvents := r.Buttons.Events()
+	var buttonEvents <-chan core.Button
+	if r.Buttons != nil {
+		buttonEvents = r.Buttons.Events()
+	}
 	mqttEvents := r.MQTT.Events()
 	for {
 		select {
@@ -79,7 +96,7 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 				r.Logger.Warn("ignored unknown button", "button", button)
 				redraw = false
 			}
-			if redraw {
+			if redraw && r.Display != nil {
 				if err := r.Display.Render(r.State.View()); err != nil {
 					return fmt.Errorf("render button update: %w", err)
 				}
@@ -106,7 +123,7 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 			default:
 				r.Logger.Warn("ignored unknown MQTT event", "kind", event.Kind)
 			}
-			if redraw {
+			if redraw && r.Display != nil {
 				if err := r.Display.Render(r.State.View()); err != nil {
 					return fmt.Errorf("render MQTT update: %w", err)
 				}

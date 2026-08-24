@@ -1,5 +1,8 @@
 [tools]
 go = "1.25"
+pipx = "latest"
+"pipx:esptool" = "latest"
+python = "3.12"
 shellcheck = "0.11.0"
 
 [tasks.default]
@@ -14,6 +17,16 @@ run = "go build -o build/soil-monitor ./cmd/soil-monitor"
 description = "Build a static Linux ARM64 binary for the Raspberry Pi"
 env = { GOOS = "linux", GOARCH = "arm64", CGO_ENABLED = "0" }
 run = "go build -trimpath -o build/soil-monitor-linux-arm64 ./cmd/soil-monitor"
+
+[tasks.build-linux-arm64]
+description = "Build a static Linux ARM64 binary"
+env = { GOOS = "linux", GOARCH = "arm64", CGO_ENABLED = "0" }
+run = "go build -trimpath -o build/soil-monitor-linux-arm64 ./cmd/soil-monitor"
+
+[tasks.build-linux-amd64]
+description = "Build a static Linux AMD64 binary"
+env = { GOOS = "linux", GOARCH = "amd64", CGO_ENABLED = "0" }
+run = "go build -trimpath -o build/soil-monitor-linux-amd64 ./cmd/soil-monitor"
 
 [tasks.test]
 description = "Run Go, release, and bootstrap workflow tests"
@@ -32,11 +45,11 @@ description = "Lint repository shell scripts"
 run = "shellcheck scripts/*.sh"
 
 [tasks.release]
-description = "Validate, build, and release to the Raspberry Pi"
-depends = ["test", "vet", "lint-shell", "build-pi"]
+description = "Validate, build, and release to a supported Debian host"
+depends = ["test", "vet", "lint-shell", "build-linux-arm64", "build-linux-amd64"]
 run = "./scripts/release.sh"
 
 [tasks.bootstrap]
-description = "Provision a fresh Raspberry Pi and release the complete appliance"
-depends = ["test", "vet", "lint-shell", "build-pi"]
+description = "Provision a fresh Raspberry Pi or generic Debian host and release the appliance"
+depends = ["test", "vet", "lint-shell", "build-linux-arm64", "build-linux-amd64"]
 run = "./scripts/bootstrap.sh"

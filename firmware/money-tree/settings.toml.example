@@ -1,0 +1,18 @@
+# Copy this file to CIRCUITPY/settings.toml and fill in the Wi-Fi values.
+# Never commit the filled-in settings.toml file.
+
+CIRCUITPY_WIFI_SSID = "YOUR_2_4_GHZ_WIFI_NAME"
+CIRCUITPY_WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
+
+MQTT_BROKER = "192.168.1.95"
+MQTT_PORT = 1883
+MQTT_TOPIC = "plants/money-tree/moisture"
+
+# Preliminary money-tree calibration. Recheck after soldering the headers.
+DRY_VALUE = 55016
+WET_VALUE = 34056
+SAMPLE_COUNT = 20
+
+# true for wall/USB power; false for one measurement followed by deep sleep.
+CONTINUOUS_MODE = true
+PUBLISH_INTERVAL_SECONDS = 30

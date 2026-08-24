@@ -75,8 +75,12 @@ case "$mode" in
       die "service account $service_user is missing; rerun bootstrap"
     sudo -n true >/dev/null 2>&1 ||
       die "non-interactive sudo is unavailable; install the documented sudoers policy"
-    sudo -n -u "$service_user" test -r "$environment" ||
-      die "$environment is missing or not readable by $service_user; rerun bootstrap or fix ownership and mode"
+    if sudo -n test -e "$environment"; then
+      sudo -n -u "$service_user" test -r "$environment" ||
+        die "$environment exists but is not readable by $service_user; fix its ownership and mode"
+    else
+      printf 'Optional environment file %s is absent; configuration must be injected by another supported mechanism.\n' "$environment"
+    fi
     rm -rf -- "$stage"
     mkdir -m 700 -- "$stage" || die "cannot create staging directory $stage"
     [ -w "$stage" ] || die "staging directory $stage is not writable"
@@ -106,8 +110,10 @@ case "$mode" in
     staged_unit="$stage/soil-monitor.service"
     [ -f "$staged_binary" ] || die "staged binary is missing"
     [ -f "$staged_unit" ] || die "staged unit is missing"
-    sudo -n -u "$service_user" test -r "$environment" ||
-      die "$environment disappeared or became unreadable by $service_user before installation"
+    if sudo -n test -e "$environment"; then
+      sudo -n -u "$service_user" test -r "$environment" ||
+        die "$environment exists but is not readable by $service_user before installation"
+    fi
     trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 
     had_binary=0

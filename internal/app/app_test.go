@@ -192,6 +192,68 @@ func TestRunnerReturnsUnexpectedWebFailure(t *testing.T) {
 	}
 }
 
+func TestRunnerWithoutOptionalAdaptersProcessesMQTTAndStops(t *testing.T) {
+	state, err := core.NewState([]core.PlantDefinition{
+		{ID: "money-tree", Name: "Money Tree"},
+		{ID: "pothos", Name: "Pothos"},
+		{ID: "snake-plant", Name: "Snake Plant"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mqtt := &fakeMQTT{events: make(chan core.MQTTEvent, 2)}
+	runner := Runner{State: state, MQTT: mqtt, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	waitForCondition(t, func() bool { return mqtt.started.Load() }, "headless MQTT start")
+	mqtt.events <- core.MQTTEvent{Kind: core.MQTTMessage, Topic: "plants/money-tree/moisture", Payload: []byte("51")}
+	waitForCondition(t, func() bool {
+		value := state.Snapshot().Plants[0].Moisture
+		return value != nil && *value == 51
+	}, "headless MQTT update")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !mqtt.closed.Load() {
+		t.Fatal("MQTT adapter was not closed")
+	}
+}
+
+func TestRunnerAllowsWebWithoutHardware(t *testing.T) {
+	state, err := core.NewState([]core.PlantDefinition{{ID: "one", Name: "One"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mqtt := &fakeMQTT{events: make(chan core.MQTTEvent)}
+	web := &fakeWeb{}
+	runner := Runner{State: state, MQTT: mqtt, Web: web}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	waitForCondition(t, func() bool { return web.started.Load() }, "headless web start")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !web.stopped.Load() {
+		t.Fatal("web adapter was not stopped")
+	}
+}
+
+func TestRunnerRejectsPartialHardwarePair(t *testing.T) {
+	state, err := core.NewState([]core.PlantDefinition{{ID: "one", Name: "One"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{State: state, MQTT: &fakeMQTT{events: make(chan core.MQTTEvent)}, Display: &fakeDisplay{}}
+	err = runner.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "display and buttons") {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
 func waitForViews(t *testing.T, display *fakeDisplay, count int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)

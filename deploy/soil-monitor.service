@@ -1,5 +1,5 @@
 [Unit]
-Description=Wireless soil moisture OLED display
+Description=Wireless soil moisture monitor
 Wants=network-online.target
 After=network-online.target
 
@@ -7,8 +7,7 @@ After=network-online.target
 Type=simple
 User=soilmonitor
 Group=soilmonitor
-SupplementaryGroups=gpio spi
-EnvironmentFile=/etc/soil-monitor/soil-monitor.env
+EnvironmentFile=-/etc/soil-monitor/soil-monitor.env
 ExecStart=/usr/local/bin/soil-monitor
 Restart=on-failure
 RestartSec=5s

@@ -52,6 +52,7 @@ make_local_fixture() {
   export SOIL_BOOTSTRAP_RECONNECT_ATTEMPTS=2
   export SOIL_BOOTSTRAP_DRY_RUN=0
   export SOIL_BOOTSTRAP_RELEASE_SCRIPT="$TEST_ROOT/fake-release"
+  unset SOIL_BOOTSTRAP_PI_HAT_ENABLED SOIL_FAKE_ARCH
 
   cat >"$TEST_ROOT/bin/ssh" <<'FAKE_SSH'
 #!/bin/sh
@@ -114,12 +115,35 @@ test_dry_run() {
 test_no_reboot_path() {
   make_local_fixture
   SOIL_FAKE_SPI_READY_INITIAL=1 "$BOOTSTRAP_SCRIPT" >/dev/null
-  assert_file_contains "$SOIL_TEST_LOG" "sudo sh /tmp/test-soil-bootstrap/bootstrap-pi.sh /tmp/test-soil-bootstrap alice"
+  assert_file_contains "$SOIL_TEST_LOG" "sudo sh /tmp/test-soil-bootstrap/bootstrap-pi.sh /tmp/test-soil-bootstrap alice true"
   assert_file_contains "$SOIL_TEST_LOG" "RELEASE target=alice@pi.example"
   if grep -F "sudo systemctl reboot" "$SOIL_TEST_LOG" >/dev/null; then
     fail "bootstrap rebooted when SPI was already active"
   fi
   [[ "$(grep -c '^SCP ' "$SOIL_TEST_LOG")" -eq 5 ]] || fail "expected five staged assets"
+}
+
+test_generic_debian_path_omits_hardware() {
+  make_local_fixture
+  local output
+  output=$("$BOOTSTRAP_SCRIPT" --pi-hat=false)
+  assert_contains "$output" "Pi HAT enabled:       false"
+  assert_contains "$output" "Hardware setup:       omitted"
+  assert_file_contains "$SOIL_TEST_LOG" "bootstrap-pi.sh /tmp/test-soil-bootstrap alice false"
+  assert_file_contains "$SOIL_TEST_LOG" "RELEASE target=alice@pi.example"
+  if grep -E "spidev|systemctl reboot" "$SOIL_TEST_LOG" >/dev/null; then
+    fail "generic bootstrap performed a hardware check or reboot"
+  fi
+}
+
+test_invalid_hardware_mode() {
+  make_local_fixture
+  local output
+  if output=$("$BOOTSTRAP_SCRIPT" --pi-hat=perhaps 2>&1); then
+    fail "invalid hardware mode was accepted"
+  fi
+  assert_contains "$output" "unknown bootstrap argument"
+  [[ ! -f "$SOIL_TEST_LOG" ]] || fail "invalid mode invoked a remote command"
 }
 
 test_reboot_path() {
@@ -166,6 +190,7 @@ make_pi_fixture() {
   export SOIL_TEST_PI_LOG="$PI_ROOT/pi.log"
   export SOIL_TEST_PI_STATE="$PI_ROOT/state"
   export SOIL_FAKE_UID=0
+  export SOIL_FAKE_ARCH=aarch64
 
   cat >"$PI_ROOT/bin/id" <<'FAKE_ID'
 #!/bin/sh
@@ -176,9 +201,9 @@ if [ "${1-}" = "soilmonitor" ] && [ -f "$SOIL_TEST_PI_STATE.user" ]; then exit 0
 exit 1
 FAKE_ID
 
-  cat >"$PI_ROOT/bin/uname" <<'FAKE_UNAME'
+cat >"$PI_ROOT/bin/uname" <<'FAKE_UNAME'
 #!/bin/sh
-printf 'aarch64\n'
+printf '%s\n' "${SOIL_FAKE_ARCH-aarch64}"
 FAKE_UNAME
 
   cat >"$PI_ROOT/bin/apt-get" <<'FAKE_APT'
@@ -278,7 +303,7 @@ FAKE_VISUDO
 
 test_pi_bootstrap_fresh_and_idempotent() {
   make_pi_fixture
-  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice >/dev/null
+  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice true >/dev/null
   assert_file_contains "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env" "SOIL_MQTT_BROKER=tcp://127.0.0.1:1883"
   assert_file_contains "$PI_ROOT/root/etc/mosquitto/conf.d/soil-monitor.conf" "listener 1883"
   assert_file_contains "$PI_ROOT/root/etc/mosquitto/conf.d/soil-monitor.conf" "allow_anonymous true"
@@ -294,7 +319,7 @@ test_pi_bootstrap_fresh_and_idempotent() {
 
   local before
   before=$(shasum "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")
-  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice >/dev/null
+  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice true >/dev/null
   [[ "$(shasum "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")" == "$before" ]] || fail "rerun changed environment"
   [[ "$(grep -c '^USERADD ' "$SOIL_TEST_PI_LOG")" -eq 1 ]] || fail "rerun recreated service user"
 }
@@ -303,28 +328,63 @@ test_pi_bootstrap_preserves_environment() {
   make_pi_fixture
   mkdir -p "$PI_ROOT/root/etc/soil-monitor"
   printf 'SOIL_SECRET=preserve-me\n' >"$PI_ROOT/root/etc/soil-monitor/soil-monitor.env"
-  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice >/dev/null
+  sh "$PI_SCRIPT" "$PI_ROOT/stage" alice true >/dev/null
   [[ "$(cat "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")" == "SOIL_SECRET=preserve-me" ]] || fail "existing environment was overwritten"
 }
 
 test_pi_bootstrap_requires_root() {
   make_pi_fixture
   local output
-  if output=$(SOIL_FAKE_UID=1000 sh "$PI_SCRIPT" "$PI_ROOT/stage" alice 2>&1); then
+  if output=$(SOIL_FAKE_UID=1000 sh "$PI_SCRIPT" "$PI_ROOT/stage" alice true 2>&1); then
     fail "non-root bootstrap returned success"
   fi
   assert_contains "$output" "run this script as root"
   [[ ! -f "$SOIL_TEST_PI_LOG" ]] || fail "non-root bootstrap invoked provisioning"
 }
 
+test_generic_debian_bootstrap_omits_pi_actions() {
+  make_pi_fixture
+  SOIL_FAKE_ARCH=x86_64 sh "$PI_SCRIPT" "$PI_ROOT/stage" alice false >/dev/null
+  assert_file_contains "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env" "SOIL_PI_HAT_ENABLED=false"
+  assert_file_contains "$SOIL_TEST_PI_LOG" "APT install -y mosquitto mosquitto-clients"
+  for unexpected in raspi-config RASPI_CONFIG GROUPADD USERMOD; do
+    if grep -F "$unexpected" "$SOIL_TEST_PI_LOG" >/dev/null; then
+      fail "generic Debian bootstrap invoked $unexpected"
+    fi
+  done
+}
+
+test_generic_bootstrap_preserves_environment() {
+  make_pi_fixture
+  mkdir -p "$PI_ROOT/root/etc/soil-monitor"
+  printf 'SOIL_SECRET=preserve-me\n' >"$PI_ROOT/root/etc/soil-monitor/soil-monitor.env"
+  SOIL_FAKE_ARCH=x86_64 sh "$PI_SCRIPT" "$PI_ROOT/stage" alice false >/dev/null
+  [[ "$(cat "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")" == "SOIL_SECRET=preserve-me" ]] || fail "generic bootstrap overwrote existing environment"
+}
+
+test_bootstrap_rejects_unsupported_architecture() {
+  make_pi_fixture
+  local output
+  if output=$(SOIL_FAKE_ARCH=riscv64 sh "$PI_SCRIPT" "$PI_ROOT/stage" alice false 2>&1); then
+    fail "unsupported architecture was accepted"
+  fi
+  assert_contains "$output" "unsupported host architecture"
+  [[ ! -f "$SOIL_TEST_PI_LOG" ]] || fail "unsupported architecture invoked provisioning"
+}
+
 run_test "bootstrap dry-run isolation" test_dry_run
 run_test "bootstrap path without reboot" test_no_reboot_path
 run_test "bootstrap path with reboot" test_reboot_path
+run_test "generic Debian path omits hardware" test_generic_debian_path_omits_hardware
+run_test "bootstrap rejects invalid hardware mode" test_invalid_hardware_mode
 run_test "bootstrap failure stops release" test_bootstrap_failure_stops_release
 run_test "bootstrap rejects invalid target" test_invalid_target
 run_test "Pi bootstrap fresh install and idempotency" test_pi_bootstrap_fresh_and_idempotent
 run_test "Pi bootstrap preserves environment" test_pi_bootstrap_preserves_environment
 run_test "Pi bootstrap requires root" test_pi_bootstrap_requires_root
+run_test "generic Debian bootstrap omits Pi actions" test_generic_debian_bootstrap_omits_pi_actions
+run_test "generic Debian bootstrap preserves environment" test_generic_bootstrap_preserves_environment
+run_test "bootstrap rejects unsupported architecture" test_bootstrap_rejects_unsupported_architecture
 
 printf '%d passed; %d failed\n' "$pass_count" "$fail_count"
 [[ "$fail_count" -eq 0 ]]

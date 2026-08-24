@@ -7,7 +7,9 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 readonly REPO_ROOT
 
 readonly TARGET="${SOIL_RELEASE_TARGET-brooks@192.168.1.95}"
-readonly LOCAL_BINARY="${SOIL_RELEASE_BINARY-$REPO_ROOT/build/soil-monitor-linux-arm64}"
+readonly BINARY_OVERRIDE="${SOIL_RELEASE_BINARY-}"
+readonly LOCAL_BINARY_ARM64="${SOIL_RELEASE_BINARY_ARM64-${BINARY_OVERRIDE:-$REPO_ROOT/build/soil-monitor-linux-arm64}}"
+readonly LOCAL_BINARY_AMD64="${SOIL_RELEASE_BINARY_AMD64-${BINARY_OVERRIDE:-$REPO_ROOT/build/soil-monitor-linux-amd64}}"
 readonly LOCAL_UNIT="${SOIL_RELEASE_UNIT-$REPO_ROOT/deploy/soil-monitor.service}"
 readonly REMOTE_SCRIPT="$SCRIPT_DIR/release-remote.sh"
 readonly REMOTE_BINARY="${SOIL_RELEASE_REMOTE_BINARY-/usr/local/bin/soil-monitor}"
@@ -65,7 +67,8 @@ require_command() {
 }
 
 validate_target "$TARGET"
-validate_absolute_path SOIL_RELEASE_BINARY "$LOCAL_BINARY"
+validate_absolute_path SOIL_RELEASE_BINARY_ARM64 "$LOCAL_BINARY_ARM64"
+validate_absolute_path SOIL_RELEASE_BINARY_AMD64 "$LOCAL_BINARY_AMD64"
 validate_absolute_path SOIL_RELEASE_UNIT "$LOCAL_UNIT"
 validate_absolute_path SOIL_RELEASE_REMOTE_BINARY "$REMOTE_BINARY"
 validate_absolute_path SOIL_RELEASE_REMOTE_UNIT "$REMOTE_UNIT"
@@ -80,14 +83,18 @@ validate_nonnegative_integer SOIL_RELEASE_VERIFY_DELAY_SECONDS "$VERIFY_DELAY"
 
 require_command ssh
 require_command scp
-[[ -f "$LOCAL_BINARY" && -x "$LOCAL_BINARY" ]] ||
-  die "ARM64 binary is missing or not executable at $LOCAL_BINARY; run 'mise run build-pi'"
+[[ -f "$LOCAL_BINARY_ARM64" && -x "$LOCAL_BINARY_ARM64" ]] ||
+  die "Linux ARM64 binary is missing or not executable at $LOCAL_BINARY_ARM64; run 'mise run build-linux-arm64'"
+[[ -f "$LOCAL_BINARY_AMD64" && -x "$LOCAL_BINARY_AMD64" ]] ||
+  die "Linux AMD64 binary is missing or not executable at $LOCAL_BINARY_AMD64; run 'mise run build-linux-amd64'"
 [[ -f "$LOCAL_UNIT" ]] || die "systemd unit is missing at $LOCAL_UNIT"
 [[ -f "$REMOTE_SCRIPT" ]] || die "remote release helper is missing at $REMOTE_SCRIPT"
 
 printf 'Release plan\n'
 printf '  Target:             %s\n' "$TARGET"
-printf '  Binary artifact:    %s\n' "$LOCAL_BINARY"
+printf '  ARM64 artifact:     %s\n' "$LOCAL_BINARY_ARM64"
+printf '  AMD64 artifact:     %s\n' "$LOCAL_BINARY_AMD64"
+printf '  Target architecture: detected remotely (ARM64 or AMD64)\n'
 printf '  Unit artifact:      %s\n' "$LOCAL_UNIT"
 printf '  Staging directory:  %s\n' "$REMOTE_STAGE"
 printf '  Binary destination: %s\n' "$REMOTE_BINARY"
@@ -108,6 +115,22 @@ printf 'Checking SSH connectivity to %s...\n' "$TARGET"
 if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" true; then
   die "batch-mode SSH failed for $TARGET; install the SSH key and verify the host is reachable"
 fi
+
+printf 'Detecting remote architecture...\n'
+remote_arch=$(ssh "${SSH_OPTIONS[@]}" "$TARGET" uname -m) ||
+  die "could not determine the remote architecture"
+case "$(printf '%s' "$remote_arch" | tr -d '[:space:]')" in
+  aarch64|arm64)
+    readonly LOCAL_BINARY="$LOCAL_BINARY_ARM64"
+    readonly GOARCH=arm64
+    ;;
+  x86_64|amd64)
+    readonly LOCAL_BINARY="$LOCAL_BINARY_AMD64"
+    readonly GOARCH=amd64
+    ;;
+  *) die "unsupported remote architecture: $remote_arch (supported: ARM64 and AMD64)" ;;
+esac
+printf 'Selected Linux %s artifact: %s\n' "$GOARCH" "$LOCAL_BINARY"
 
 printf 'Checking remote release prerequisites...\n'
 if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" sh -s -- \

@@ -1,6 +1,6 @@
 # Wireless Soil Monitor
 
-A small Go application for a Raspberry Pi 3A+ with the Waveshare 1.3-inch SH1106 OLED HAT. It subscribes to MQTT soil-moisture readings for three plants, shows the selected plant on the OLED, uses the HAT buttons for navigation, and serves the same readings on a local web dashboard.
+A small Go application that subscribes to MQTT soil-moisture readings for three plants. It can run as a complete Raspberry Pi 3A+ appliance with the Waveshare 1.3-inch SH1106 OLED HAT, or headlessly on a generic Debian server/LXC with the local web dashboard.
 
 The Pi also runs Mosquitto, so the appliance is self-contained: sensor nodes publish readings to the Pi, and the single soil-monitor binary drives both the OLED and dashboard.
 
@@ -17,23 +17,31 @@ mise run bootstrap
 
 Bootstrap installs and configures Mosquitto, enables SPI, creates the service account and environment, reboots if necessary, and performs the first application release.
 
+For a systemd-based AMD64 or ARM64 Debian server/LXC without the Pi HAT:
+
+```bash
+SOIL_RELEASE_TARGET=brooks@soil-monitor.local mise run bootstrap -- --pi-hat=false
+```
+
+Generic mode installs the same Mosquitto and soil-monitor services but does not install `raspi-config`, create GPIO/SPI groups, enable SPI, inspect hardware devices, or reboot for hardware activation.
+
 For later application releases:
 
 ```bash
 mise run release
 ```
 
-Use a different Pi address or hostname with:
+Use a different address or hostname with:
 
 ```bash
 SOIL_RELEASE_TARGET=brooks@rpi3.local mise run bootstrap
 ```
 
-Bootstrap requires the Pi to already be reachable over SSH. It does not configure or recover Wi-Fi. Mosquitto and the dashboard are intended for a trusted local network and do not provide authentication or TLS.
+Bootstrap requires the host to already be reachable over SSH with sudo and systemd. It does not configure or recover networking. Mosquitto and the dashboard are intended for a trusted local network and do not provide authentication or TLS. Releases detect ARM64 or AMD64 remotely and select the matching static binary.
 
 ## Configuration
 
-The Pi stores its configuration at:
+Bootstrap stores service configuration at:
 
 ```text
 /etc/soil-monitor/soil-monitor.env
@@ -45,10 +53,26 @@ Bootstrap creates it when missing and preserves its contents on later runs. The 
 SOIL_MQTT_BROKER=tcp://127.0.0.1:1883
 SOIL_MQTT_CLIENT_ID=kitchen-soil-display
 SOIL_PLANTS="money-tree:Money Tree,pothos:Pothos,snake-plant:Snake Plant"
+SOIL_PI_HAT_ENABLED=true
 SOIL_SPI_PORT=/dev/spidev0.0
 SOIL_BUTTON_DEBOUNCE_MS=150
+SOIL_HTTP_ENABLED=true
 SOIL_HTTP_ADDR=:8080
 ```
+
+Set `SOIL_PI_HAT_ENABLED=false` for a host without the OLED HAT. Set `SOIL_HTTP_ENABLED=false` to omit the dashboard listener. Hardware settings are validated only when the HAT is enabled, and the HTTP address is validated only when HTTP is enabled.
+
+The binary can also run directly without any configuration file:
+
+```bash
+SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 \
+SOIL_PLANTS="money-tree:Money Tree,pothos:Pothos,snake-plant:Snake Plant" \
+./build/soil-monitor --pi-hat=false
+```
+
+Alternatively, pass `--config /path/to/soil-monitor.env`. The file accepts blank lines, `#` comments, and unquoted or single/double-quoted `KEY=VALUE` entries from the documented `SOIL_*` settings; it is parsed as data and does not execute shell expansion. Precedence is command-line flags, process environment, the selected file, then built-in defaults. Run `soil-monitor --help` for every flag and environment mapping.
+
+The systemd environment file is optional to the unit and is preserved byte-for-byte by routine releases. Bootstrap creates it when missing. If it is removed, required variables must instead be injected with a systemd drop-in or another service-manager mechanism.
 
 After editing it, restart the application:
 
@@ -108,11 +132,13 @@ mise run vet
 mise run lint-shell
 ```
 
-Build for the local machine or the 64-bit ARM Pi:
+Build for the local machine, ARM64 Linux, or AMD64 Linux:
 
 ```bash
 mise run build
 mise run build-pi
+mise run build-linux-arm64
+mise run build-linux-amd64
 ```
 
 Preview deployment without contacting the Pi:
@@ -120,7 +146,10 @@ Preview deployment without contacting the Pi:
 ```bash
 SOIL_RELEASE_DRY_RUN=1 mise run release
 SOIL_BOOTSTRAP_DRY_RUN=1 mise run bootstrap
+SOIL_BOOTSTRAP_DRY_RUN=1 mise run bootstrap -- --pi-hat=false
 ```
+
+Dry runs validate local inputs and artifacts but do not connect to the host. Failed activation automatically restores `.previous` binary and unit backups when both exist. For manual rollback, reinstall `/usr/local/bin/soil-monitor.previous` and `/etc/systemd/system/soil-monitor.service.previous` to their unsuffixed paths, then run `sudo systemctl daemon-reload` and restart `soil-monitor.service`.
 
 ## Development workflow
 
