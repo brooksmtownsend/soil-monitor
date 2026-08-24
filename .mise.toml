@@ -31,7 +31,7 @@ run = "go build -trimpath -o build/soil-monitor-linux-amd64 ./cmd/soil-monitor"
 
 [tasks.test]
 description = "Run Go, release, and bootstrap workflow tests"
-run = ["go test ./...", "./scripts/release_test.sh", "./scripts/bootstrap_test.sh"]
+run = ["go test ./...", "python firmware/money-tree/test_payload.py", "./scripts/release_test.sh", "./scripts/bootstrap_test.sh"]
 
 [tasks.fmt]
 description = "Format Go source files"

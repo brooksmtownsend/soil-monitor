@@ -20,3 +20,11 @@ func TestRunHelpStopsBeforeAdapterInitialization(t *testing.T) {
 		t.Fatalf("unexpected help output:\n%s", output.String())
 	}
 }
+
+func TestRunDatabaseFailurePrecedesAdapterInitialization(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	err := run(logger, []string{"--mqtt-broker=tcp://127.0.0.1:1883", "--database-path=/dev/null/soil.db", "--pi-hat=false", "--http=false"}, nil, io.Discard)
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("initialize reading history")) {
+		t.Fatalf("run() error = %v", err)
+	}
+}

@@ -100,6 +100,7 @@ printf '  Staging directory:  %s\n' "$REMOTE_STAGE"
 printf '  Binary destination: %s\n' "$REMOTE_BINARY"
 printf '  Unit destination:   %s\n' "$REMOTE_UNIT"
 printf '  Environment file:   %s (preserved)\n' "$REMOTE_ENV"
+printf '  Application state:  /var/lib/soil-monitor (preserved, never transferred)\n'
 printf '  Service account:    %s\n' "$SERVICE_USER"
 printf '  Service:            %s\n' "$SERVICE"
 printf '  Service actions:    validate unit, daemon-reload, restart, verify active\n'

@@ -199,10 +199,12 @@ make_remote_fixture() {
   REMOTE_ROOT=$(mktemp -d)
   export REMOTE_ROOT
   trap 'rm -rf -- "$REMOTE_ROOT"' EXIT
-  mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_ROOT/stage" "$REMOTE_ROOT/dest" "$REMOTE_ROOT/etc"
+  mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_ROOT/stage" "$REMOTE_ROOT/dest" "$REMOTE_ROOT/etc" "$REMOTE_ROOT/var/lib/soil-monitor"
   printf 'new-binary\n' >"$REMOTE_ROOT/stage/soil-monitor"
   printf 'new-unit\n' >"$REMOTE_ROOT/stage/soil-monitor.service"
   printf 'SOIL_SECRET=preserve-me\n' >"$REMOTE_ROOT/etc/soil-monitor.env"
+	printf 'sqlite-history-preserve-me\n' >"$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db"
+	chmod 0640 "$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db"
   export SOIL_TEST_REMOTE_LOG="$REMOTE_ROOT/remote.log"
   export SOIL_TEST_ACTIVE_COUNT="$REMOTE_ROOT/active.count"
 
@@ -318,12 +320,16 @@ test_remote_install_allows_absent_environment() {
 
 test_remote_success_preserves_environment() {
   make_remote_fixture
-  local before
+  local before database_before database_metadata_before
   before=$(shasum "$REMOTE_ROOT/etc/soil-monitor.env")
+	database_before=$(shasum "$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db")
+	database_metadata_before=$(ls -ln "$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db")
   SOIL_FAKE_ACTIVE_AFTER=1 run_remote_install >/dev/null
   [[ "$(cat "$REMOTE_ROOT/dest/soil-monitor")" == "new-binary" ]] || fail "new binary was not installed"
   [[ "$(cat "$REMOTE_ROOT/dest/soil-monitor.service")" == "new-unit" ]] || fail "new unit was not installed"
   [[ "$(shasum "$REMOTE_ROOT/etc/soil-monitor.env")" == "$before" ]] || fail "environment file changed"
+	[[ "$(shasum "$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db")" == "$database_before" ]] || fail "database contents changed"
+	[[ "$(ls -ln "$REMOTE_ROOT/var/lib/soil-monitor/soil-monitor.db")" == "$database_metadata_before" ]] || fail "database metadata changed"
   assert_file_contains "$SOIL_TEST_REMOTE_LOG" "SYSTEMCTL daemon-reload"
   assert_file_contains "$SOIL_TEST_REMOTE_LOG" "SYSTEMCTL restart soil-monitor.service"
 }

@@ -8,22 +8,21 @@ import (
 )
 
 func TestFormatNoReadingAndDisconnected(t *testing.T) {
-	layout := Format(core.View{PlantName: "Money Tree", Position: 1, Total: 3})
+	layout := Format(core.View{HasPlant: true, PlantName: "Money Tree", Position: 1, Total: 3})
 	if layout.Moisture != "--%" || layout.Position != "1 / 3" || layout.Status != "MQTT OFFLINE" {
 		t.Fatalf("unexpected layout: %#v", layout)
 	}
 }
 
 func TestFormatReadingAndConnected(t *testing.T) {
-	value := 72
-	layout := Format(core.View{PlantName: "Pothos", Moisture: &value, Position: 2, Total: 3, Connected: true})
+	layout := Format(core.View{HasPlant: true, PlantName: "Pothos", Latest: &core.Reading{Percentage: 72}, Position: 2, Total: 3, Connected: true})
 	if layout.Moisture != "72%" || layout.Status != "" {
 		t.Fatalf("unexpected layout: %#v", layout)
 	}
 }
 
 func TestFormatTruncatesLongNamesDeterministically(t *testing.T) {
-	view := core.View{PlantName: "An Extremely Long Plant Display Name", Position: 1, Total: 3}
+	view := core.View{HasPlant: true, PlantName: "An Extremely Long Plant Display Name", Position: 1, Total: 3}
 	first := Format(view)
 	second := Format(view)
 	if first.PlantName != second.PlantName || !strings.HasSuffix(first.PlantName, "…") || len([]rune(first.PlantName)) != maxPlantNameRunes {
@@ -32,8 +31,7 @@ func TestFormatTruncatesLongNamesDeterministically(t *testing.T) {
 }
 
 func TestFrameDimensionsAndContent(t *testing.T) {
-	value := 47
-	frame := Frame(core.View{PlantName: "Money Tree", Moisture: &value, Position: 1, Total: 3, Connected: true})
+	frame := Frame(core.View{HasPlant: true, PlantName: "Money Tree", Latest: &core.Reading{Percentage: 47}, Position: 1, Total: 3, Connected: true})
 	if frame.Bounds().Dx() != Width || frame.Bounds().Dy() != Height {
 		t.Fatalf("frame bounds = %v", frame.Bounds())
 	}
@@ -46,5 +44,12 @@ func TestFrameDimensionsAndContent(t *testing.T) {
 	}
 	if !nonBlack {
 		t.Fatal("rendered frame is blank")
+	}
+}
+
+func TestFormatEmptyCatalog(t *testing.T) {
+	layout := Format(core.View{Connected: true})
+	if layout.PlantName != "Waiting for readings" || layout.Position != "0 / 0" || layout.Status != "" {
+		t.Fatalf("unexpected empty layout: %#v", layout)
 	}
 }

@@ -32,11 +32,11 @@ Do not use the README as the complete technical specification. If documentation 
 
 - The deliverable is one static Go binary targeting Linux ARM64 on a Raspberry Pi 3A+.
 - The supported display is the Waveshare 1.3-inch SH1106 OLED HAT in factory four-wire SPI mode using `/dev/spidev0.0`.
-- The application has exactly three configured plants and subscribes to `plants/+/moisture`.
-- Moisture payloads are base-10 integers from `0` through `100`; malformed, unknown, and out-of-range messages preserve prior state.
+- The application discovers any number of kebab-case plant IDs through `plants/+/moisture`; display names are assigned later in the browser.
+- Moisture payloads are JSON objects with non-negative integer `raw` and `percentage` from `0` through `100`; malformed and out-of-range messages preserve prior state.
 - The Pi-local broker defaults to `tcp://127.0.0.1:1883`. Its port 1883 listener and the port 8080 dashboard are trusted-LAN services without authentication or TLS.
-- The dashboard is read-only, embedded in the Go binary, server-rendered, and has no external assets or JavaScript dependency.
-- Runtime readings are in memory. Retained MQTT publications restore values after process restart.
+- The dashboard is embedded, server-rendered, and has no external assets or JavaScript dependency. Its only mutation assigns a discovered plant's display name.
+- Plant metadata and reading history are stored in local SQLite; retained MQTT publications can add another receipt-time observation after restart.
 - `soilmonitor` is the unprivileged service account. `/etc/soil-monitor/soil-monitor.env` is host-managed, `root:soilmonitor`, mode `0640`.
 - Routine releases must preserve the environment file byte-for-byte. Bootstrap may create it when missing and normalize its metadata without replacing existing content.
 

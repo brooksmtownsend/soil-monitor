@@ -9,25 +9,23 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	defaultClientID = "soil-monitor"
-	defaultSPIPort  = "/dev/spidev0.0"
-	defaultHTTPAddr = ":8080"
-	defaultDebounce = 150 * time.Millisecond
+	defaultClientID     = "soil-monitor"
+	defaultSPIPort      = "/dev/spidev0.0"
+	defaultHTTPAddr     = ":8080"
+	defaultDatabasePath = "/var/lib/soil-monitor/soil-monitor.db"
+	defaultDebounce     = 150 * time.Millisecond
 )
-
-var plantIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 var knownSettings = map[string]struct{}{
 	"SOIL_MQTT_BROKER":        {},
 	"SOIL_MQTT_CLIENT_ID":     {},
-	"SOIL_PLANTS":             {},
+	"SOIL_DATABASE_PATH":      {},
 	"SOIL_PI_HAT_ENABLED":     {},
 	"SOIL_SPI_PORT":           {},
 	"SOIL_BUTTON_DEBOUNCE_MS": {},
@@ -35,20 +33,15 @@ var knownSettings = map[string]struct{}{
 	"SOIL_HTTP_ADDR":          {},
 }
 
-type Plant struct {
-	ID   string
-	Name string
-}
-
 type Config struct {
 	BrokerURL    string
 	ClientID     string
+	DatabasePath string
 	PIHatEnabled bool
 	SPIPort      string
 	HTTPEnabled  bool
 	HTTPAddr     string
 	Debounce     time.Duration
-	Plants       []Plant
 }
 
 // FromEnv preserves the original environment-only entry point.
@@ -76,7 +69,7 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 
 	brokerURL := values["SOIL_MQTT_BROKER"]
 	clientID := values["SOIL_MQTT_CLIENT_ID"]
-	plantsValue := values["SOIL_PLANTS"]
+	databasePath := values["SOIL_DATABASE_PATH"]
 	piHatValue := values["SOIL_PI_HAT_ENABLED"]
 	spiPort := values["SOIL_SPI_PORT"]
 	debounceValue := values["SOIL_BUTTON_DEBOUNCE_MS"]
@@ -89,7 +82,7 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 	fs.StringVar(&configPath, "config", configPath, "optional KEY=VALUE configuration file (no environment equivalent)")
 	fs.StringVar(&brokerURL, "mqtt-broker", brokerURL, "MQTT broker URL (SOIL_MQTT_BROKER; required)")
 	fs.StringVar(&clientID, "mqtt-client-id", clientID, "MQTT client identifier (SOIL_MQTT_CLIENT_ID)")
-	fs.StringVar(&plantsValue, "plants", plantsValue, "three comma-separated id:name entries (SOIL_PLANTS; required)")
+	fs.StringVar(&databasePath, "database-path", databasePath, "SQLite database path (SOIL_DATABASE_PATH)")
 	fs.StringVar(&piHatValue, "pi-hat", piHatValue, "enable Raspberry Pi HAT display and buttons: true or false (SOIL_PI_HAT_ENABLED)")
 	fs.StringVar(&spiPort, "spi-port", spiPort, "Pi HAT SPI device path (SOIL_SPI_PORT)")
 	fs.StringVar(&debounceValue, "button-debounce-ms", debounceValue, "Pi HAT button debounce in milliseconds (SOIL_BUTTON_DEBOUNCE_MS)")
@@ -115,20 +108,19 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-
-	plants, err := ParsePlants(plantsValue)
-	if err != nil {
-		return Config{}, err
+	if strings.TrimSpace(httpAddr) == "" {
+		httpAddr = defaultHTTPAddr
 	}
+
 	cfg := Config{
 		BrokerURL:    strings.TrimSpace(brokerURL),
 		ClientID:     strings.TrimSpace(clientID),
+		DatabasePath: strings.TrimSpace(databasePath),
 		PIHatEnabled: piHatEnabled,
 		SPIPort:      strings.TrimSpace(spiPort),
 		HTTPEnabled:  httpEnabled,
 		HTTPAddr:     strings.TrimSpace(httpAddr),
 		Debounce:     time.Duration(debounceMS) * time.Millisecond,
-		Plants:       plants,
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -148,6 +140,7 @@ func helpRequested(args []string) bool {
 func defaultValues() map[string]string {
 	return map[string]string{
 		"SOIL_MQTT_CLIENT_ID":     defaultClientID,
+		"SOIL_DATABASE_PATH":      defaultDatabasePath,
 		"SOIL_PI_HAT_ENABLED":     "true",
 		"SOIL_SPI_PORT":           defaultSPIPort,
 		"SOIL_BUTTON_DEBOUNCE_MS": strconv.Itoa(int(defaultDebounce / time.Millisecond)),
@@ -220,7 +213,7 @@ func environmentValues(environ []string) map[string]string {
 		if !ok {
 			continue
 		}
-		if _, known := knownSettings[key]; known && strings.TrimSpace(value) != "" {
+		if _, known := knownSettings[key]; known {
 			values[key] = value
 		}
 	}
@@ -252,30 +245,13 @@ func positiveInteger(name, raw string) (int, error) {
 func writeUsage(output io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(output, "Usage: soil-monitor [options]")
 	fmt.Fprintln(output, "Configuration precedence: flags > environment > --config file > defaults.")
-	fmt.Fprintln(output, "Defaults: Pi HAT=true, HTTP=true, client ID=soil-monitor, SPI=/dev/spidev0.0, debounce=150ms, HTTP=:8080.")
-	fmt.Fprintln(output, "Environment: SOIL_MQTT_BROKER, SOIL_MQTT_CLIENT_ID, SOIL_PLANTS,")
+	fmt.Fprintln(output, "Defaults: Pi HAT=true, HTTP=true, client ID=soil-monitor, database=/var/lib/soil-monitor/soil-monitor.db, SPI=/dev/spidev0.0, debounce=150ms, HTTP=:8080.")
+	fmt.Fprintln(output, "Environment: SOIL_MQTT_BROKER, SOIL_MQTT_CLIENT_ID, SOIL_DATABASE_PATH,")
 	fmt.Fprintln(output, "  SOIL_PI_HAT_ENABLED, SOIL_SPI_PORT, SOIL_BUTTON_DEBOUNCE_MS,")
 	fmt.Fprintln(output, "  SOIL_HTTP_ENABLED, SOIL_HTTP_ADDR.")
-	fmt.Fprintln(output, "Example: SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 SOIL_PLANTS='one:One,two:Two,three:Three' soil-monitor --pi-hat=false")
+	fmt.Fprintln(output, "Example: SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 SOIL_DATABASE_PATH=./soil-monitor.db soil-monitor --pi-hat=false")
 	fmt.Fprintln(output, "Options:")
 	fs.PrintDefaults()
-}
-
-func ParsePlants(raw string) ([]Plant, error) {
-	parts := strings.Split(raw, ",")
-	if strings.TrimSpace(raw) == "" || len(parts) != 3 {
-		return nil, fmt.Errorf("SOIL_PLANTS must contain exactly three comma-separated id:name entries")
-	}
-
-	plants := make([]Plant, 0, 3)
-	for i, part := range parts {
-		fields := strings.SplitN(part, ":", 2)
-		if len(fields) != 2 {
-			return nil, fmt.Errorf("SOIL_PLANTS entry %d must use id:name format", i+1)
-		}
-		plants = append(plants, Plant{ID: strings.TrimSpace(fields[0]), Name: strings.TrimSpace(fields[1])})
-	}
-	return plants, nil
 }
 
 func (c Config) Validate() error {
@@ -294,6 +270,9 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.ClientID) == "" {
 		return fmt.Errorf("SOIL_MQTT_CLIENT_ID must not be empty")
 	}
+	if strings.TrimSpace(c.DatabasePath) == "" {
+		return fmt.Errorf("SOIL_DATABASE_PATH must not be empty")
+	}
 	if c.PIHatEnabled {
 		if strings.TrimSpace(c.SPIPort) == "" {
 			return fmt.Errorf("SOIL_SPI_PORT must not be empty when Pi HAT support is enabled")
@@ -311,23 +290,6 @@ func (c Config) Validate() error {
 		if err != nil || portNumber < 1 || portNumber > 65535 {
 			return fmt.Errorf("SOIL_HTTP_ADDR port must be an integer from 1 through 65535")
 		}
-	}
-	if len(c.Plants) != 3 {
-		return fmt.Errorf("exactly three plants are required")
-	}
-
-	seen := make(map[string]struct{}, len(c.Plants))
-	for i, plant := range c.Plants {
-		if !plantIDPattern.MatchString(plant.ID) {
-			return fmt.Errorf("plant %d identifier %q must be kebab-case", i+1, plant.ID)
-		}
-		if strings.TrimSpace(plant.Name) == "" {
-			return fmt.Errorf("plant %q must have a non-empty display name", plant.ID)
-		}
-		if _, exists := seen[plant.ID]; exists {
-			return fmt.Errorf("plant identifier %q is duplicated", plant.ID)
-		}
-		seen[plant.ID] = struct{}{}
 	}
 	return nil
 }

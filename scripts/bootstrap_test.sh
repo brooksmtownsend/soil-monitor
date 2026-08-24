@@ -319,8 +319,15 @@ test_pi_bootstrap_fresh_and_idempotent() {
 
   local before
   before=$(shasum "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")
+	mkdir -p "$PI_ROOT/root/var/lib/soil-monitor"
+	printf 'sqlite-history-preserve-me\n' >"$PI_ROOT/root/var/lib/soil-monitor/soil-monitor.db"
+	local database_before database_metadata_before
+	database_before=$(shasum "$PI_ROOT/root/var/lib/soil-monitor/soil-monitor.db")
+	database_metadata_before=$(ls -ln "$PI_ROOT/root/var/lib/soil-monitor/soil-monitor.db")
   sh "$PI_SCRIPT" "$PI_ROOT/stage" alice true >/dev/null
   [[ "$(shasum "$PI_ROOT/root/etc/soil-monitor/soil-monitor.env")" == "$before" ]] || fail "rerun changed environment"
+	[[ "$(shasum "$PI_ROOT/root/var/lib/soil-monitor/soil-monitor.db")" == "$database_before" ]] || fail "rerun changed database contents"
+	[[ "$(ls -ln "$PI_ROOT/root/var/lib/soil-monitor/soil-monitor.db")" == "$database_metadata_before" ]] || fail "rerun changed database metadata"
   [[ "$(grep -c '^USERADD ' "$SOIL_TEST_PI_LOG")" -eq 1 ]] || fail "rerun recreated service user"
 }
 

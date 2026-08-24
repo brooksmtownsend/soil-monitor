@@ -9,6 +9,8 @@ import board
 import socketpool
 import wifi
 
+from payload import moisture_payload
+
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 
 
@@ -91,7 +93,7 @@ def shutdown(message):
     alarm.exit_and_deep_sleep_until_alarms()
 
 
-def publish_moisture(moisture):
+def publish_moisture(raw, moisture):
     """Attempt one bounded Wi-Fi/MQTT publication and report success."""
     mqtt = None
     try:
@@ -112,8 +114,9 @@ def publish_moisture(moisture):
 
         print("Connecting to MQTT:", MQTT_BROKER, MQTT_PORT)
         mqtt.connect()
-        mqtt.publish(MQTT_TOPIC, moisture, qos=1, retain=True)
-        print("Published retained moisture:", moisture, "%")
+        payload = moisture_payload(raw, moisture)
+        mqtt.publish(MQTT_TOPIC, payload, qos=1, retain=True)
+        print("Published retained moisture:", payload)
         mqtt.disconnect()
         return True
     except Exception as error:  # CircuitPython prints the concrete error below.
@@ -137,7 +140,7 @@ while True:
         print("Raw average:", raw_value)
         print("Raw max:", maximum)
         print("Moisture:", moisture, "%")
-        published = publish_moisture(moisture)
+        published = publish_moisture(raw_value, moisture)
     except Exception as error:  # Keep continuous mode recoverable from sensor errors.
         print("Measurement failed:", repr(error))
         published = False

@@ -27,9 +27,16 @@ type Layout struct {
 }
 
 func Format(view core.View) Layout {
+	if !view.HasPlant {
+		status := ""
+		if !view.Connected {
+			status = "MQTT OFFLINE"
+		}
+		return Layout{PlantName: "Waiting for readings", Moisture: "--%", Position: "0 / 0", Status: status}
+	}
 	moisture := "--%"
-	if view.Moisture != nil {
-		moisture = fmt.Sprintf("%d%%", *view.Moisture)
+	if view.Latest != nil {
+		moisture = fmt.Sprintf("%d%%", view.Latest.Percentage)
 	}
 	status := ""
 	if !view.Connected {

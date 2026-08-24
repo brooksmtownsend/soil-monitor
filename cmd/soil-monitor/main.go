@@ -15,6 +15,7 @@ import (
 	"soilmonitor/internal/config"
 	"soilmonitor/internal/core"
 	"soilmonitor/internal/hardware"
+	"soilmonitor/internal/history"
 	"soilmonitor/internal/mqttadapter"
 	"soilmonitor/internal/webdisplay"
 )
@@ -35,6 +36,26 @@ func run(logger *slog.Logger, args, environ []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}
+	historyStore, err := history.Open(cfg.DatabasePath)
+	if err != nil {
+		return fmt.Errorf("initialize reading history: %w", err)
+	}
+	defer historyStore.Close()
+	restored, err := historyStore.Plants(context.Background())
+	if err != nil {
+		return fmt.Errorf("restore plant history: %w", err)
+	}
+	plants := make([]core.Plant, len(restored))
+	for i, plant := range restored {
+		plants[i] = core.Plant{ID: plant.ID, Name: plant.Name, FirstSeen: plant.FirstSeen, LastSeen: plant.LastSeen}
+		if plant.Latest != nil {
+			plants[i].Latest = &core.Reading{PlantID: plant.ID, Raw: plant.Latest.Raw, Percentage: plant.Latest.Percentage, ObservedAt: plant.Latest.ObservedAt}
+		}
+	}
+	state, err := core.NewState(plants)
+	if err != nil {
+		return fmt.Errorf("restore plant state: %w", err)
+	}
 
 	var displayAdapter core.Display
 	var buttons core.ButtonSource
@@ -53,18 +74,10 @@ func run(logger *slog.Logger, args, environ []string, output io.Writer) error {
 		}
 	}
 
-	definitions := make([]core.PlantDefinition, len(cfg.Plants))
-	for i, plant := range cfg.Plants {
-		definitions[i] = core.PlantDefinition{ID: plant.ID, Name: plant.Name}
-	}
-	state, err := core.NewState(definitions)
-	if err != nil {
-		closeHardware(buttons, displayAdapter)
-		return fmt.Errorf("initialize plant state: %w", err)
-	}
+	commands := app.NewCommander()
 	var webAdapter core.WebServer
 	if cfg.HTTPEnabled {
-		webAdapter, err = webdisplay.New(cfg.HTTPAddr, state)
+		webAdapter, err = webdisplay.New(cfg.HTTPAddr, state, historyStore, commands)
 		if err != nil {
 			closeHardware(buttons, displayAdapter)
 			return fmt.Errorf("initialize web display: %w", err)
@@ -74,12 +87,14 @@ func run(logger *slog.Logger, args, environ []string, output io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	runner := app.Runner{
-		State:   state,
-		Display: displayAdapter,
-		Buttons: buttons,
-		MQTT:    mqttadapter.New(cfg.BrokerURL, cfg.ClientID),
-		Web:     webAdapter,
-		Logger:  logger,
+		State:    state,
+		Display:  displayAdapter,
+		Buttons:  buttons,
+		MQTT:     mqttadapter.New(cfg.BrokerURL, cfg.ClientID),
+		Web:      webAdapter,
+		History:  historyStore,
+		Commands: commands,
+		Logger:   logger,
 	}
 	return runner.Run(ctx)
 }

@@ -10,8 +10,8 @@ usage() {
   cat <<'EOF'
 Usage: ./blast.sh [interval-seconds] [broker-host]
 
-Publish the values 1 through 100 to plants/test-plant/moisture over one MQTT
-connection. The application must include test-plant in SOIL_PLANTS.
+Publish 100 JSON readings to plants/test-plant/moisture over one MQTT
+connection. The application discovers test-plant automatically.
 
 Environment overrides:
   SOIL_BLAST_INTERVAL_SECONDS  Delay between values (default: 0.1)
@@ -49,10 +49,8 @@ command -v mosquitto_pub >/dev/null 2>&1 || {
 
 printf 'Publishing 1-100 to %s at %s:%s every %ss\n' \
   "$TOPIC" "$BROKER_HOST" "$BROKER_PORT" "$INTERVAL" >&2
-printf 'Ensure test-plant is present in the Pi\047s SOIL_PLANTS configuration.\n' >&2
-
 for value in {1..100}; do
-  printf '%s\n' "$value"
+	printf '{"raw":%d,"percentage":%d}\n' "$((30000 + value))" "$value"
   printf 'sent %3d / 100\r' "$value" >&2
   if ((value < 100)); then
     sleep "$INTERVAL"

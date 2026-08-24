@@ -2,7 +2,7 @@
 
 This firmware averages the capacitive sensor's analog output, converts it to a
 moisture percentage using dry and wet calibration values, and publishes the
-percentage to `plants/money-tree/moisture` with MQTT retain enabled. Its operating
+raw average and percentage as JSON to `plants/money-tree/moisture` with MQTT retain enabled. Its operating
 mode is selected in `settings.toml`:
 
 - `CONTINUOUS_MODE = true` measures and publishes repeatedly on wall/USB power.
@@ -18,13 +18,14 @@ The sensor wiring is:
 
 ## CIRCUITPY layout
 
-Copy `code.py` to the root of the `CIRCUITPY` drive. Copy
+Copy `code.py` and `payload.py` to the root of the `CIRCUITPY` drive. Copy
 `settings.toml.example` there as `settings.toml`, then replace the two Wi-Fi
 placeholders. The finished board should contain:
 
 ```text
 CIRCUITPY/
   code.py
+  payload.py
   settings.toml
   lib/
     adafruit_connection_manager.mpy
@@ -42,7 +43,7 @@ to see Wi-Fi and MQTT diagnostics. A successful run ends with:
 ```text
 Raw average: 44536
 Moisture: 50 %
-Published retained moisture: 50 %
+Published retained moisture: {"raw":44536,"percentage":50}
 Next measurement in 30 seconds.
 ```
 

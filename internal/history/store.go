@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -41,7 +42,9 @@ type Repository interface {
 }
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func Open(path string) (*Store, error) {
@@ -234,7 +237,8 @@ func (s *Store) Readings(ctx context.Context, plantID string, limit int) ([]Read
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.closeOnce.Do(func() { s.closeErr = s.db.Close() })
+	return s.closeErr
 }
 
 func formatTime(value time.Time) string {

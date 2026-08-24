@@ -1,6 +1,6 @@
 # Wireless Soil Monitor
 
-A small Go application that subscribes to MQTT soil-moisture readings for three plants. It can run as a complete Raspberry Pi 3A+ appliance with the Waveshare 1.3-inch SH1106 OLED HAT, or headlessly on a generic Debian server/LXC with the local web dashboard.
+A small Go application that discovers MQTT soil-moisture sensors, stores their history locally, and displays any number of plants. It can run as a complete Raspberry Pi 3A+ appliance with the Waveshare 1.3-inch SH1106 OLED HAT, or headlessly on a generic Debian server/LXC with the local web dashboard.
 
 The Pi also runs Mosquitto, so the appliance is self-contained: sensor nodes publish readings to the Pi, and the single soil-monitor binary drives both the OLED and dashboard.
 
@@ -52,7 +52,7 @@ Bootstrap creates it when missing and preserves its contents on later runs. The 
 ```dotenv
 SOIL_MQTT_BROKER=tcp://127.0.0.1:1883
 SOIL_MQTT_CLIENT_ID=kitchen-soil-display
-SOIL_PLANTS="money-tree:Money Tree,pothos:Pothos,snake-plant:Snake Plant"
+SOIL_DATABASE_PATH=/var/lib/soil-monitor/soil-monitor.db
 SOIL_PI_HAT_ENABLED=true
 SOIL_SPI_PORT=/dev/spidev0.0
 SOIL_BUTTON_DEBOUNCE_MS=150
@@ -66,7 +66,7 @@ The binary can also run directly without any configuration file:
 
 ```bash
 SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 \
-SOIL_PLANTS="money-tree:Money Tree,pothos:Pothos,snake-plant:Snake Plant" \
+SOIL_DATABASE_PATH=./soil-monitor.db \
 ./build/soil-monitor --pi-hat=false
 ```
 
@@ -89,7 +89,9 @@ Open the Pi's port 8080 from another device on the same LAN:
 http://192.168.1.95:8080/
 ```
 
-The read-only page shows all three plants, their latest percentages or `--` before a reading arrives, and the MQTT connection state. It refreshes automatically without JavaScript.
+The page shows every discovered plant, its latest raw value and percentage, and the MQTT connection state. Select a plant to view its newest 1,000 readings as an inline chart and table or assign a friendly display name. It refreshes automatically without JavaScript.
+
+The dashboard's name form changes persistent application data. Port 8080 remains an unauthenticated trusted-LAN service, so it must not be exposed to an untrusted network.
 
 Check it from a terminal with:
 
@@ -99,21 +101,29 @@ curl -fsS http://192.168.1.95:8080/
 
 ## Publish a test reading
 
-The application subscribes to `plants/+/moisture`. Payloads are integer percentages from `0` through `100`:
+The application subscribes to `plants/+/moisture` and discovers kebab-case plant IDs automatically. Payloads are JSON objects with a non-negative integer `raw` reading and an integer `percentage` from `0` through `100`:
 
 ```bash
-mosquitto_pub -h 192.168.1.95 -t plants/money-tree/moisture -m 47
-mosquitto_pub -h 192.168.1.95 -t plants/pothos/moisture -m 72
-mosquitto_pub -h 192.168.1.95 -t plants/snake-plant/moisture -m 31
+mosquitto_pub -h 192.168.1.95 -t plants/money-tree/moisture -m '{"raw":32768,"percentage":47}'
+mosquitto_pub -h 192.168.1.95 -t plants/pothos/moisture -m '{"raw":30100,"percentage":72}'
+mosquitto_pub -h 192.168.1.95 -t plants/snake-plant/moisture -m '{"raw":41000,"percentage":31}'
 ```
 
 Use `-r` to retain a reading across application restarts:
 
 ```bash
-mosquitto_pub -h 192.168.1.95 -r -t plants/money-tree/moisture -m 47
+mosquitto_pub -h 192.168.1.95 -r -t plants/money-tree/moisture -m '{"raw":32768,"percentage":47}'
 ```
 
 KEY1 selects the previous plant, KEY2 selects the next plant, and KEY3 is currently reserved.
+
+## Reading history and upgrades
+
+SQLite history is stored at `SOIL_DATABASE_PATH`, defaulting to `/var/lib/soil-monitor/soil-monitor.db`. Timestamps record when the monitor receives each reading in UTC. Because retained MQTT payloads contain no stable reading ID, reconnecting or restarting can record the retained value as a new observation.
+
+History is retained without automatic pruning. Monitor the size of `/var/lib/soil-monitor`, and back up the database while the service is stopped or with SQLite's online backup tooling. Bootstrap preserves an existing database and routine releases never transfer or replace it.
+
+The JSON payload is a breaking protocol change. Upgrade every publisher together with the monitor; the old binary requires integer payloads, while the new binary rejects them. To roll back, restore the previous monitor binary and unit, restore publishers to integer payloads, and leave the SQLite database in place for a later upgrade. Legacy `SOIL_PLANTS` values can remain temporarily for rollback but are ignored by the new binary.
 
 ## Local development and testing
 
