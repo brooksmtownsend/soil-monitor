@@ -9,8 +9,8 @@ MQTT_PORT = 1883
 MQTT_TOPIC = "plants/money-tree/moisture"
 
 # Preliminary money-tree calibration. Recheck after soldering the headers.
-DRY_VALUE = 55016
-WET_VALUE = 34056
+DRY_VALUE = 55000
+WET_VALUE = 28000
 SAMPLE_COUNT = 20
 
 # true for wall/USB power; false for one measurement followed by deep sleep.
