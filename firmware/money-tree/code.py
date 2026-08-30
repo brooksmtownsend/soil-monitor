@@ -46,7 +46,7 @@ DRY_VALUE = int(required_setting("DRY_VALUE"))
 WET_VALUE = int(required_setting("WET_VALUE"))
 SAMPLE_COUNT = int(os.getenv("SAMPLE_COUNT", 20))
 CONTINUOUS_MODE = boolean_setting("CONTINUOUS_MODE", False)
-PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", 30))
+PUBLISH_INTERVAL_SECONDS = int(os.getenv("PUBLISH_INTERVAL_SECONDS", 3600))
 
 if not 0 <= DRY_VALUE <= 65535:
     raise RuntimeError("DRY_VALUE must be between 0 and 65535")
@@ -86,11 +86,15 @@ def read_moisture():
 
 
 def shutdown(message):
-    """Turn off Wi-Fi and deep sleep until a reset or power-cycle."""
+    """Turn off Wi-Fi and deep sleep until the configured interval elapses."""
     print(message)
     wifi.radio.enabled = False
     time.sleep(0.25)
-    alarm.exit_and_deep_sleep_until_alarms()
+    print("Next measurement in", PUBLISH_INTERVAL_SECONDS, "seconds.")
+    wake_alarm = alarm.time.TimeAlarm(
+        monotonic_time=time.monotonic() + PUBLISH_INTERVAL_SECONDS
+    )
+    alarm.exit_and_deep_sleep_until_alarms(wake_alarm)
 
 
 def publish_moisture(raw, moisture):
@@ -131,7 +135,7 @@ def publish_moisture(raw, moisture):
 
 print("Money-tree moisture publisher")
 print("Topic:", MQTT_TOPIC)
-print("Mode:", "continuous" if CONTINUOUS_MODE else "one-shot battery")
+print("Mode:", "continuous" if CONTINUOUS_MODE else "periodic battery")
 
 while True:
     try:
@@ -147,8 +151,8 @@ while True:
 
     if not CONTINUOUS_MODE:
         if published:
-            shutdown("Measurement complete; sleeping until reset.")
-        shutdown("Measurement or network attempt failed; sleeping until reset.")
+            shutdown("Measurement complete; entering timed deep sleep.")
+        shutdown("Measurement or network attempt failed; entering timed deep sleep.")
 
     wifi.radio.enabled = False
     print("Next measurement in", PUBLISH_INTERVAL_SECONDS, "seconds.")

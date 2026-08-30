@@ -13,6 +13,8 @@ DRY_VALUE = 55000
 WET_VALUE = 28000
 SAMPLE_COUNT = 20
 
-# true for wall/USB power; false for one measurement followed by deep sleep.
-CONTINUOUS_MODE = true
-PUBLISH_INTERVAL_SECONDS = 30
+# true keeps the board awake between cycles; false uses timed deep sleep.
+CONTINUOUS_MODE = false
+
+# Deployed cadence is one hour. Temporarily use 60 for a short USB test.
+PUBLISH_INTERVAL_SECONDS = 3600
