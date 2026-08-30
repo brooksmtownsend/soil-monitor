@@ -57,10 +57,10 @@ SOIL_PI_HAT_ENABLED=true
 SOIL_SPI_PORT=/dev/spidev0.0
 SOIL_BUTTON_DEBOUNCE_MS=150
 SOIL_HTTP_ENABLED=true
-SOIL_HTTP_ADDR=:8080
+SOIL_HTTP_ADDR=:80
 ```
 
-Set `SOIL_PI_HAT_ENABLED=false` for a host without the OLED HAT. Set `SOIL_HTTP_ENABLED=false` to omit the dashboard listener. Hardware settings are validated only when the HAT is enabled, and the HTTP address is validated only when HTTP is enabled.
+Set `SOIL_PI_HAT_ENABLED=false`
 
 The binary can also run directly without any configuration file:
 
@@ -83,20 +83,24 @@ sudo systemctl restart soil-monitor.service
 
 ## Dashboard
 
-Open the Pi's port 8080 from another device on the same LAN:
+Open the Pi's port 80 from another device on the same LAN:
 
 ```text
-http://192.168.1.95:8080/
+http://192.168.1.95/
 ```
 
-The page shows every discovered plant, its latest raw value and percentage, and the MQTT connection state. Select a plant to view its newest 1,000 readings as an inline chart and table or assign a friendly display name. It refreshes automatically without JavaScript.
+The page shows every discovered plant, its latest raw value and percentage, and the MQTT connection state. Select a plant to view an inline history chart and table, or assign a friendly display name. Plant history defaults to the rolling `1d` range; `1w`, `1mo`, `3mo`, `6mo`, and `1y` controls select longer ranges. Day and week ranges cover the preceding 24 hours or 7 days. Month and year ranges use UTC calendar dates and clamp to the target month's final day when needed. Each result contains at most the newest 1,000 readings in the selected range.
 
-The dashboard's name form changes persistent application data. Port 8080 remains an unauthenticated trusted-LAN service, so it must not be exposed to an untrusted network.
+Latest values update over the local WebSocket connection without a full-page reload. History remains a server-rendered snapshot and refreshes when a range is selected or the detail page is reloaded. A range can also be bookmarked directly, such as `/plants/money-tree?range=3mo`.
+
+The dashboard's name form changes persistent application data. Port 80 remains an unauthenticated trusted-LAN service, so it must not be exposed to an untrusted network.
+
+> **Migration note:** The default HTTP port changed from 8080 to 80 in this release. If your deployment relied on the old default, add `SOIL_HTTP_ADDR=:8080` to `/etc/soil-monitor/soil-monitor.env` to preserve the previous behavior.
 
 Check it from a terminal with:
 
 ```bash
-curl -fsS http://192.168.1.95:8080/
+curl -fsS http://192.168.1.95/
 ```
 
 ## Publish a test reading

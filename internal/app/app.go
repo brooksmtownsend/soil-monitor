@@ -151,6 +151,9 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 					return fmt.Errorf("render button update: %w", err)
 				}
 			}
+			if redraw && r.Web != nil {
+				r.Web.Notify(r.State.Snapshot())
+			}
 		case event, ok := <-mqttEvents:
 			if !ok {
 				mqttEvents = nil
@@ -184,6 +187,9 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 					return fmt.Errorf("render MQTT update: %w", err)
 				}
 			}
+			if redraw && r.Web != nil {
+				r.Web.Notify(r.State.Snapshot())
+			}
 		case command := <-renameCommands:
 			err := r.History.RenamePlant(command.ctx, command.id, command.name)
 			redraw := false
@@ -195,6 +201,9 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 				if err := r.Display.Render(r.State.View()); err != nil {
 					return fmt.Errorf("render plant name update: %w", err)
 				}
+			}
+			if redraw && r.Web != nil {
+				r.Web.Notify(r.State.Snapshot())
 			}
 		}
 	}

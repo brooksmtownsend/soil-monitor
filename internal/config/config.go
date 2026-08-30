@@ -17,7 +17,7 @@ import (
 const (
 	defaultClientID     = "soil-monitor"
 	defaultSPIPort      = "/dev/spidev0.0"
-	defaultHTTPAddr     = ":8080"
+	defaultHTTPAddr     = ":80"
 	defaultDatabasePath = "/var/lib/soil-monitor/soil-monitor.db"
 	defaultDebounce     = 150 * time.Millisecond
 )
@@ -245,7 +245,7 @@ func positiveInteger(name, raw string) (int, error) {
 func writeUsage(output io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(output, "Usage: soil-monitor [options]")
 	fmt.Fprintln(output, "Configuration precedence: flags > environment > --config file > defaults.")
-	fmt.Fprintln(output, "Defaults: Pi HAT=true, HTTP=true, client ID=soil-monitor, database=/var/lib/soil-monitor/soil-monitor.db, SPI=/dev/spidev0.0, debounce=150ms, HTTP=:8080.")
+	fmt.Fprintln(output, "Defaults: Pi HAT=true, HTTP=true, client ID=soil-monitor, database=/var/lib/soil-monitor/soil-monitor.db, SPI=/dev/spidev0.0, debounce=150ms, HTTP=:80.")
 	fmt.Fprintln(output, "Environment: SOIL_MQTT_BROKER, SOIL_MQTT_CLIENT_ID, SOIL_DATABASE_PATH,")
 	fmt.Fprintln(output, "  SOIL_PI_HAT_ENABLED, SOIL_SPI_PORT, SOIL_BUTTON_DEBOUNCE_MS,")
 	fmt.Fprintln(output, "  SOIL_HTTP_ENABLED, SOIL_HTTP_ADDR.")

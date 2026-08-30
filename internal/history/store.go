@@ -37,7 +37,7 @@ type Repository interface {
 	Plants(context.Context) ([]Plant, error)
 	AppendReading(context.Context, Reading) error
 	RenamePlant(context.Context, string, string) error
-	Readings(context.Context, string, int) ([]Reading, error)
+	Readings(context.Context, string, time.Time, time.Time, int) ([]Reading, error)
 	Close() error
 }
 
@@ -196,7 +196,13 @@ func (s *Store) RenamePlant(ctx context.Context, id, name string) error {
 	return nil
 }
 
-func (s *Store) Readings(ctx context.Context, plantID string, limit int) ([]Reading, error) {
+func (s *Store) Readings(ctx context.Context, plantID string, start, end time.Time, limit int) ([]Reading, error) {
+	if start.IsZero() || end.IsZero() {
+		return nil, fmt.Errorf("reading interval must have non-zero bounds")
+	}
+	if start.After(end) {
+		return nil, fmt.Errorf("reading interval start must not be after end")
+	}
 	if limit < 1 {
 		return nil, fmt.Errorf("reading limit must be positive")
 	}
@@ -209,9 +215,10 @@ func (s *Store) Readings(ctx context.Context, plantID string, limit int) ([]Read
 	rows, err := s.db.QueryContext(ctx, `
         SELECT id, observed_at, raw, percentage FROM (
             SELECT id, observed_at, raw, percentage
-            FROM readings WHERE plant_id = ?
+            FROM readings
+            WHERE plant_id = ? AND observed_at >= ? AND observed_at <= ?
             ORDER BY observed_at DESC, id DESC LIMIT ?
-        ) ORDER BY observed_at, id`, plantID, limit)
+        ) ORDER BY observed_at, id`, plantID, formatTime(start), formatTime(end), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query readings for %q: %w", plantID, err)
 	}

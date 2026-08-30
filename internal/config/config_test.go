@@ -10,7 +10,7 @@ import (
 )
 
 func validConfig() Config {
-	return Config{BrokerURL: "tcp://localhost:1883", ClientID: "test-display", DatabasePath: "/tmp/soil.db", PIHatEnabled: true, SPIPort: "/dev/spidev0.0", HTTPEnabled: true, HTTPAddr: ":8080", Debounce: 150 * time.Millisecond}
+	return Config{BrokerURL: "tcp://localhost:1883", ClientID: "test-display", DatabasePath: "/tmp/soil.db", PIHatEnabled: true, SPIPort: "/dev/spidev0.0", HTTPEnabled: true, HTTPAddr: ":80", Debounce: 150 * time.Millisecond}
 }
 
 func TestConfigValidate(t *testing.T) {

@@ -66,6 +66,8 @@ func (f *fakeWeb) Run(ctx context.Context) error {
 	return nil
 }
 
+func (f *fakeWeb) Notify(core.Snapshot) {}
+
 type fakeHistory struct {
 	mu        sync.Mutex
 	readings  []history.Reading
@@ -97,7 +99,7 @@ func (f *fakeHistory) RenamePlant(_ context.Context, id, name string) error {
 	f.names[id] = name
 	return nil
 }
-func (f *fakeHistory) Readings(context.Context, string, int) ([]history.Reading, error) {
+func (f *fakeHistory) Readings(context.Context, string, time.Time, time.Time, int) ([]history.Reading, error) {
 	return nil, nil
 }
 func (f *fakeHistory) Close() error { f.closed.Store(true); return nil }

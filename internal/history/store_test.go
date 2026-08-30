@@ -45,15 +45,41 @@ func TestStoreLifecycleAndQueries(t *testing.T) {
 		t.Fatalf("first seen = %v", plants[0].FirstSeen)
 	}
 
-	readings, err := store.Readings(ctx, "money-tree", 1000)
+	readings, err := store.Readings(ctx, "money-tree", start.Add(5*time.Minute), start.Add(1004*time.Minute), 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(readings) != 1000 || readings[0].Raw != 30005 || readings[999].Raw != 31004 {
 		t.Fatalf("bounded readings: len=%d first=%#v last=%#v", len(readings), readings[0], readings[len(readings)-1])
 	}
-	if _, err := store.Readings(ctx, "unknown", 1000); !errors.Is(err, ErrPlantNotFound) {
+	if _, err := store.Readings(ctx, "unknown", start, start.Add(time.Hour), 1000); !errors.Is(err, ErrPlantNotFound) {
 		t.Fatalf("unknown history error = %v", err)
+	}
+
+	readings, err = store.Readings(ctx, "money-tree", start.Add(2*time.Minute), start.Add(4*time.Minute), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 3 || readings[0].Raw != 30002 || readings[2].Raw != 30004 {
+		t.Fatalf("inclusive interval readings = %#v", readings)
+	}
+	empty, err := store.Readings(ctx, "money-tree", start.Add(-2*time.Hour), start.Add(-time.Hour), 1000)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty interval readings = %#v, %v", empty, err)
+	}
+	for _, tt := range []struct {
+		name       string
+		start, end time.Time
+		limit      int
+	}{
+		{name: "zero start", end: start, limit: 1},
+		{name: "zero end", start: start, limit: 1},
+		{name: "reversed", start: start.Add(time.Minute), end: start, limit: 1},
+		{name: "zero limit", start: start, end: start.Add(time.Minute)},
+	} {
+		if _, err := store.Readings(ctx, "money-tree", tt.start, tt.end, tt.limit); err == nil {
+			t.Errorf("%s: expected validation error", tt.name)
+		}
 	}
 
 	if err := store.Close(); err != nil {

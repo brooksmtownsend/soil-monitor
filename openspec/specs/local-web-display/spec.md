@@ -40,19 +40,35 @@ The root page SHALL render valid HTML containing every discovered plant's assign
 - **WHEN** the catalog is empty
 - **THEN** the page explains that it is waiting for readings and renders no fabricated plant cards
 
-### Requirement: Periodic static refresh
-Read-only HTML pages SHALL instruct the browser to request a fresh server-rendered snapshot periodically without requiring JavaScript, WebSockets, or server-sent events. A name-edit form response SHALL redirect before normal periodic refresh resumes.
+### Requirement: Live WebSocket updates
+Read-only HTML pages SHALL connect to the server via a WebSocket endpoint and receive pushed state snapshots whenever readings or connection state change, without a full page reload. Inline JavaScript SHALL be permitted solely to manage this WebSocket connection and apply DOM updates; no external JavaScript libraries or assets are permitted. When the WebSocket is unavailable or closes unexpectedly, the browser SHALL attempt reconnection automatically so the page self-heals after a server restart. A name-edit form response SHALL still redirect to the plant detail page after saving.
 
-#### Scenario: State changes after a page load
-- **WHEN** a new MQTT value arrives after the browser loads a read-only page
-- **THEN** a subsequent automatic page refresh displays the updated stored value
+#### Scenario: New reading arrives while overview page is open
+- **WHEN** a valid MQTT reading is received while one or more browsers have the overview page open
+- **THEN** each connected browser updates the affected plant card in place without a full page reload
+
+#### Scenario: MQTT connection state changes while page is open
+- **WHEN** the MQTT broker connection changes state while a browser has the overview page open
+- **THEN** the MQTT status indicator updates in place without a full page reload
+
+#### Scenario: Browser connects to the WebSocket endpoint
+- **WHEN** a browser opens the WebSocket endpoint at `/ws`
+- **THEN** the server immediately pushes the current state snapshot to that client
+
+#### Scenario: WebSocket connection is closed or errors
+- **WHEN** the WebSocket connection drops or the server restarts
+- **THEN** the browser attempts to reconnect periodically until the connection is re-established
+
+#### Scenario: No JavaScript is available
+- **WHEN** a browser with JavaScript disabled loads a read-only page
+- **THEN** the page still renders the current state as returned by the server-rendered HTML response; live updates are unavailable but the page is not broken
 
 ### Requirement: Configurable HTTP listener
-The application SHALL independently configure HTTP enablement and `SOIL_HTTP_ADDR`. HTTP SHALL default to enabled, the address SHALL default to `:8080`, and a malformed address SHALL be rejected only when HTTP is enabled.
+The application SHALL independently configure HTTP enablement and `SOIL_HTTP_ADDR`. HTTP SHALL default to enabled, the address SHALL default to `:80`, and a malformed address SHALL be rejected only when HTTP is enabled.
 
 #### Scenario: Default address is used
 - **WHEN** HTTP is enabled and `SOIL_HTTP_ADDR` is unset or blank
-- **THEN** the HTTP server listens on port 8080 on the configured host interfaces
+- **THEN** the HTTP server listens on port 80 on the configured host interfaces
 
 #### Scenario: Address is overridden
 - **WHEN** HTTP is enabled and `SOIL_HTTP_ADDR` contains a valid host-and-port listen address
@@ -134,15 +150,31 @@ The browser SHALL allow a user to assign or replace the display name of an exist
 - **THEN** the server returns status 404 and creates neither a plant nor a name
 
 ### Requirement: Plant history page
-The browser SHALL provide a server-rendered detail page for each discovered plant containing its identifier, assigned display name or identifier fallback, latest reading, name form, and at most the newest 1,000 historical readings rendered chronologically as an inline SVG percentage chart with an accessible tabular fallback. It SHALL use no external assets or JavaScript dependency.
+The browser SHALL provide a server-rendered detail page for each discovered plant containing its identifier, assigned display name or identifier fallback, latest reading, name form, and controls for the rolling history ranges `1d`, `1w`, `1mo`, `3mo`, `6mo`, and `1y`. The selected range SHALL end at the current request time and begin 24 hours, 7 days, 1 calendar month, 3 calendar months, 6 calendar months, or 1 calendar year earlier in UTC, respectively. Calendar subtraction SHALL preserve the UTC time of day and clamp the day to the last valid day of the target month when necessary. The page SHALL render at most the newest 1,000 readings within the selected range, ordered chronologically as an inline SVG percentage chart with an accessible tabular fallback, and SHALL use no external assets or JavaScript dependency.
+
+#### Scenario: Detail page is requested without a range
+- **WHEN** a client sends `GET /plants/money-tree` without a `range` query value
+- **THEN** the server returns status 200 with `1d` selected and renders only readings from the rolling 24-hour interval ending at the request time
 
 #### Scenario: Known plant has history
-- **WHEN** a client sends `GET /plants/money-tree` for a plant with stored readings
-- **THEN** the server returns status 200 with its inline 0-to-100-percent chart and timestamped raw and percentage table
+- **WHEN** a client sends `GET /plants/money-tree?range=3mo`
+- **THEN** the server returns status 200, identifies `3mo` as selected, provides controls for all six supported presets, and renders only readings observed since the instant three calendar months before the request time
+
+#### Scenario: Calendar range crosses a shorter month
+- **WHEN** a calendar-month or calendar-year preset targets a month without the request date's day number
+- **THEN** the range begins on the target month's final day at the same UTC time of day
 
 #### Scenario: Known plant has more than 1,000 readings
-- **WHEN** a detail page is requested for a plant with more than 1,000 stored readings
-- **THEN** the chart and table contain only the newest 1,000 readings ordered from oldest to newest
+- **WHEN** the selected range contains more than 1,000 stored readings
+- **THEN** the chart and table contain only the newest 1,000 readings within that range, ordered from oldest to newest
+
+#### Scenario: Selected range has no readings
+- **WHEN** a known plant has no stored readings within the selected range
+- **THEN** the page returns status 200, retains the selected range controls, and explicitly reports that no readings exist in that range
+
+#### Scenario: Unsupported range is requested
+- **WHEN** a client requests a plant detail page with an empty or unsupported `range` query value
+- **THEN** the server returns status 400 without querying or rendering plant history
 
 #### Scenario: Unknown plant is requested
 - **WHEN** a detail page is requested for an identifier that has not been discovered

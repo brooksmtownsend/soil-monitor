@@ -44,4 +44,5 @@ type MQTTSource interface {
 
 type WebServer interface {
 	Run(context.Context) error
+	Notify(Snapshot)
 }
