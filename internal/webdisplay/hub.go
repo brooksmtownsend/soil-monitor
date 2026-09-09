@@ -18,6 +18,9 @@ const (
 type wsPlant struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
+	Cadence           string `json:"cadence,omitempty"`
+	NextWateringDate  string `json:"nextWateringDate,omitempty"`
+	HasPhoto          bool   `json:"hasPhoto"`
 	Percentage        *int   `json:"percentage,omitempty"`
 	Raw               *int   `json:"raw,omitempty"`
 	ObservedAt        string `json:"observedAt,omitempty"`
@@ -32,14 +35,14 @@ type wsSnapshot struct {
 func marshalSnapshot(snap core.Snapshot) ([]byte, error) {
 	plants := make([]wsPlant, len(snap.Plants))
 	for i, p := range snap.Plants {
-		wp := wsPlant{ID: p.ID, Name: p.Name}
+		wp := wsPlant{ID: p.ID, Name: p.Name, Cadence: string(p.Cadence), NextWateringDate: string(p.NextWateringDate), HasPhoto: p.HasPhoto}
 		if p.Latest != nil {
 			pct := p.Latest.Percentage
 			raw := p.Latest.Raw
 			wp.Percentage = &pct
 			wp.Raw = &raw
-			wp.ObservedAt = p.Latest.ObservedAt.UTC().Format(time.RFC3339)
-			wp.ObservedAtDisplay = p.Latest.ObservedAt.Format("2006-01-02 15:04:05 MST")
+			wp.ObservedAt = formatMachineTime(p.Latest.ObservedAt)
+			wp.ObservedAtDisplay = formatEasternTime(p.Latest.ObservedAt)
 		}
 		plants[i] = wp
 	}

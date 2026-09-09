@@ -47,7 +47,7 @@ func run(logger *slog.Logger, args, environ []string, output io.Writer) error {
 	}
 	plants := make([]core.Plant, len(restored))
 	for i, plant := range restored {
-		plants[i] = core.Plant{ID: plant.ID, Name: plant.Name, FirstSeen: plant.FirstSeen, LastSeen: plant.LastSeen}
+		plants[i] = core.Plant{ID: plant.ID, Name: plant.Name, FirstSeen: plant.FirstSeen, LastSeen: plant.LastSeen, Cadence: plant.Cadence, NextWateringDate: plant.NextWateringDate, HasPhoto: plant.HasPhoto}
 		if plant.Latest != nil {
 			plants[i].Latest = &core.Reading{PlantID: plant.ID, Raw: plant.Latest.Raw, Percentage: plant.Latest.Percentage, ObservedAt: plant.Latest.ObservedAt}
 		}

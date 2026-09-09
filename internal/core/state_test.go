@@ -48,7 +48,11 @@ func TestEmptyStateAndDynamicNavigation(t *testing.T) {
 }
 
 func TestRestoredOrderAndSnapshotsAreCopied(t *testing.T) {
-	state, err := NewState([]Plant{restoredPlant("zebra", "", 1), restoredPlant("aloe", "", 0), restoredPlant("basil", "", 0)})
+	aloe := restoredPlant("aloe", "", 0)
+	aloe.Cadence = CadenceWeekly
+	aloe.NextWateringDate = "2026-08-31"
+	aloe.HasPhoto = true
+	state, err := NewState([]Plant{restoredPlant("zebra", "", 1), aloe, restoredPlant("basil", "", 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +63,33 @@ func TestRestoredOrderAndSnapshotsAreCopied(t *testing.T) {
 	snapshot.Plants[0].Name = "changed"
 	snapshot.Plants[0].Latest.Percentage = 99
 	fresh := state.Snapshot()
-	if fresh.Plants[0].Name != "aloe" || fresh.Plants[0].Latest.Percentage == 99 {
+	if fresh.Plants[0].Name != "aloe" || fresh.Plants[0].Latest.Percentage == 99 || fresh.Plants[0].Cadence != CadenceWeekly || fresh.Plants[0].NextWateringDate != "2026-08-31" || !fresh.Plants[0].HasPhoto {
 		t.Fatalf("snapshot exposed mutable state: %#v", fresh.Plants[0])
+	}
+}
+
+func TestApplyRegisteredPlantAndThenReading(t *testing.T) {
+	state, err := NewState(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredAt := testTime
+	registered := Plant{ID: "money-tree", Name: "Money Tree", FirstSeen: registeredAt, LastSeen: registeredAt, Cadence: CadenceMonthly, NextWateringDate: "2026-09-24", HasPhoto: true}
+	if !state.ApplyPlant(registered) {
+		t.Fatal("first registered plant did not request redraw")
+	}
+	if view := state.View(); !view.HasPlant || view.PlantName != "Money Tree" || view.Latest != nil || view.Total != 1 {
+		t.Fatalf("registered view = %#v", view)
+	}
+	reading := Reading{PlantID: registered.ID, Raw: 32000, Percentage: 47, ObservedAt: registeredAt.Add(time.Hour)}
+	state.ApplyReading(reading)
+	plant, ok := state.Plant(registered.ID)
+	if !ok || plant.Latest == nil || plant.Latest.Raw != 32000 || plant.Cadence != CadenceMonthly || plant.NextWateringDate != "2026-09-24" || !plant.HasPhoto {
+		t.Fatalf("registered plant after reading = %#v, %v", plant, ok)
+	}
+	state.ApplyPlant(Plant{ID: "pothos", Name: "Pothos", FirstSeen: registeredAt.Add(time.Minute), LastSeen: registeredAt.Add(time.Minute), Cadence: CadenceAsNeeded})
+	if view := state.View(); view.PlantID != "money-tree" || view.Total != 2 {
+		t.Fatalf("later registration changed selection: %#v", view)
 	}
 }
 

@@ -25,11 +25,14 @@ type Reading struct {
 }
 
 type Plant struct {
-	ID        string
-	Name      string
-	FirstSeen time.Time
-	LastSeen  time.Time
-	Latest    *Reading
+	ID               string
+	Name             string
+	FirstSeen        time.Time
+	LastSeen         time.Time
+	Latest           *Reading
+	Cadence          Cadence
+	NextWateringDate LocalDate
+	HasPhoto         bool
 }
 
 type View struct {
@@ -43,11 +46,14 @@ type View struct {
 }
 
 type PlantSnapshot struct {
-	ID        string
-	Name      string
-	FirstSeen time.Time
-	LastSeen  time.Time
-	Latest    *Reading
+	ID               string
+	Name             string
+	FirstSeen        time.Time
+	LastSeen         time.Time
+	Latest           *Reading
+	Cadence          Cadence
+	NextWateringDate LocalDate
+	HasPhoto         bool
 }
 
 type Snapshot struct {
@@ -73,6 +79,17 @@ func NewState(restored []Plant) (*State, error) {
 		if plant.Name != "" {
 			if _, err := NormalizePlantName(plant.Name); err != nil {
 				return nil, fmt.Errorf("plant %q: %w", plant.ID, err)
+			}
+		}
+		if plant.Cadence != "" && !ValidCadence(plant.Cadence) {
+			return nil, fmt.Errorf("plant %q has unsupported watering cadence %q", plant.ID, plant.Cadence)
+		}
+		if plant.NextWateringDate != "" {
+			if _, err := ParseLocalDate(string(plant.NextWateringDate)); err != nil {
+				return nil, fmt.Errorf("plant %q: %w", plant.ID, err)
+			}
+			if plant.Cadence == "" || plant.Cadence == CadenceAsNeeded {
+				return nil, fmt.Errorf("plant %q has a next watering date without a scheduled cadence", plant.ID)
 			}
 		}
 		plants[i] = copyPlant(plant)
@@ -161,7 +178,7 @@ func (s *State) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	plants := make([]PlantSnapshot, len(s.plants))
 	for i, plant := range s.plants {
-		plants[i] = PlantSnapshot{ID: plant.ID, Name: plantLabel(plant), FirstSeen: plant.FirstSeen, LastSeen: plant.LastSeen, Latest: copyReading(plant.Latest)}
+		plants[i] = snapshotPlant(plant)
 	}
 	selectedID := ""
 	if s.selected >= 0 {
@@ -178,7 +195,7 @@ func (s *State) Plant(id string) (PlantSnapshot, bool) {
 		return PlantSnapshot{}, false
 	}
 	plant := s.plants[index]
-	return PlantSnapshot{ID: plant.ID, Name: plantLabel(plant), FirstSeen: plant.FirstSeen, LastSeen: plant.LastSeen, Latest: copyReading(plant.Latest)}, true
+	return snapshotPlant(plant), true
 }
 
 func (s *State) Previous() bool {
@@ -229,6 +246,23 @@ func (s *State) RenamePlant(id, name string) bool {
 	return index == s.selected
 }
 
+func (s *State) ApplyPlant(plant Plant) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	index, exists := s.byID[plant.ID]
+	if !exists {
+		index = len(s.plants)
+		s.byID[plant.ID] = index
+		s.plants = append(s.plants, copyPlant(plant))
+		if s.selected < 0 {
+			s.selected = 0
+		}
+		return index == s.selected
+	}
+	s.plants[index] = copyPlant(plant)
+	return index == s.selected
+}
+
 func (s *State) SetConnected(connected bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -244,6 +278,19 @@ func plantLabel(plant Plant) string {
 		return plant.Name
 	}
 	return plant.ID
+}
+
+func snapshotPlant(plant Plant) PlantSnapshot {
+	return PlantSnapshot{
+		ID:               plant.ID,
+		Name:             plantLabel(plant),
+		FirstSeen:        plant.FirstSeen,
+		LastSeen:         plant.LastSeen,
+		Latest:           copyReading(plant.Latest),
+		Cadence:          plant.Cadence,
+		NextWateringDate: plant.NextWateringDate,
+		HasPhoto:         plant.HasPhoto,
+	}
 }
 
 func copyPlant(plant Plant) Plant { plant.Latest = copyReading(plant.Latest); return plant }

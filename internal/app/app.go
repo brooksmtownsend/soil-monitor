@@ -11,41 +11,128 @@ import (
 	"soilmonitor/internal/history"
 )
 
-type renameCommand struct {
-	ctx    context.Context
-	id     string
-	name   string
-	result chan error
+type commandKind int
+
+const (
+	commandRename commandKind = iota
+	commandRegister
+	commandSchedule
+	commandWater
+	commandPhoto
+)
+
+type plantCommand struct {
+	kind    commandKind
+	ctx     context.Context
+	id      string
+	name    string
+	cadence core.Cadence
+	photo   *history.Photo
+	result  chan commandResult
+}
+
+type commandResult struct {
+	id  string
+	err error
 }
 
 type Commander struct {
-	renames chan renameCommand
+	commands chan plantCommand
 }
 
 func NewCommander() *Commander {
-	return &Commander{renames: make(chan renameCommand)}
+	return &Commander{commands: make(chan plantCommand)}
 }
 
 func (c *Commander) RenamePlant(ctx context.Context, id, name string) error {
-	if c == nil {
-		return fmt.Errorf("plant command service is unavailable")
-	}
 	normalized, err := core.NormalizePlantName(name)
 	if err != nil {
 		return err
 	}
-	command := renameCommand{ctx: ctx, id: id, name: normalized, result: make(chan error, 1)}
-	select {
-	case c.renames <- command:
-	case <-ctx.Done():
-		return ctx.Err()
+	if !core.ValidPlantID(id) {
+		return fmt.Errorf("invalid plant identifier")
 	}
-	select {
-	case err := <-command.result:
+	_, err = c.submit(ctx, plantCommand{kind: commandRename, id: id, name: normalized})
+	return err
+}
+
+func (c *Commander) RegisterPlant(ctx context.Context, name string, cadence core.Cadence, photo *history.Photo) (string, error) {
+	id, normalized, err := core.DerivePlantID(name)
+	if err != nil {
+		return "", err
+	}
+	if !core.ValidCadence(cadence) {
+		return "", fmt.Errorf("unsupported watering cadence %q", cadence)
+	}
+	photo, err = copyValidatedPhoto(photo)
+	if err != nil {
+		return "", err
+	}
+	return c.submit(ctx, plantCommand{kind: commandRegister, id: id, name: normalized, cadence: cadence, photo: photo})
+}
+
+func (c *Commander) SetSchedule(ctx context.Context, id string, cadence core.Cadence) error {
+	if !core.ValidPlantID(id) {
+		return fmt.Errorf("invalid plant identifier")
+	}
+	if !core.ValidCadence(cadence) {
+		return fmt.Errorf("unsupported watering cadence %q", cadence)
+	}
+	_, err := c.submit(ctx, plantCommand{kind: commandSchedule, id: id, cadence: cadence})
+	return err
+}
+
+func (c *Commander) ConfirmWatering(ctx context.Context, id string) error {
+	if !core.ValidPlantID(id) {
+		return fmt.Errorf("invalid plant identifier")
+	}
+	_, err := c.submit(ctx, plantCommand{kind: commandWater, id: id})
+	return err
+}
+
+func (c *Commander) ReplacePhoto(ctx context.Context, id string, photo history.Photo) error {
+	if !core.ValidPlantID(id) {
+		return fmt.Errorf("invalid plant identifier")
+	}
+	validated, err := copyValidatedPhoto(&photo)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+	_, err = c.submit(ctx, plantCommand{kind: commandPhoto, id: id, photo: validated})
+	return err
+}
+
+func (c *Commander) submit(ctx context.Context, command plantCommand) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("plant command service is unavailable")
+	}
+	command.ctx = ctx
+	command.result = make(chan commandResult, 1)
+	select {
+	case c.commands <- command:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	select {
+	case result := <-command.result:
+		return result.id, result.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func copyValidatedPhoto(photo *history.Photo) (*history.Photo, error) {
+	if photo == nil {
+		return nil, nil
+	}
+	mediaType, err := core.DetectPhotoMediaType(photo.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	if mediaType != photo.MediaType {
+		return nil, fmt.Errorf("photo media type %q does not match detected %q", photo.MediaType, mediaType)
+	}
+	return &history.Photo{Bytes: append([]byte(nil), photo.Bytes...), MediaType: photo.MediaType}, nil
 }
 
 type Runner struct {
@@ -115,9 +202,9 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 		buttonEvents = r.Buttons.Events()
 	}
 	mqttEvents := r.MQTT.Events()
-	var renameCommands <-chan renameCommand
+	var commands <-chan plantCommand
 	if r.Commands != nil {
-		renameCommands = r.Commands.renames
+		commands = r.Commands.commands
 	}
 	for {
 		select {
@@ -190,21 +277,80 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 			if redraw && r.Web != nil {
 				r.Web.Notify(r.State.Snapshot())
 			}
-		case command := <-renameCommands:
-			err := r.History.RenamePlant(command.ctx, command.id, command.name)
-			redraw := false
-			if err == nil {
-				redraw = r.State.RenamePlant(command.id, command.name)
-			}
-			command.result <- err
+		case command := <-commands:
+			redraw, changed, result := r.applyCommand(command)
+			command.result <- result
 			if redraw && r.Display != nil {
 				if err := r.Display.Render(r.State.View()); err != nil {
-					return fmt.Errorf("render plant name update: %w", err)
+					return fmt.Errorf("render plant command update: %w", err)
 				}
 			}
-			if redraw && r.Web != nil {
+			if changed && r.Web != nil {
 				r.Web.Notify(r.State.Snapshot())
 			}
 		}
 	}
+}
+
+func (r *Runner) applyCommand(command plantCommand) (redraw, changed bool, result commandResult) {
+	switch command.kind {
+	case commandRename:
+		result.err = r.History.RenamePlant(command.ctx, command.id, command.name)
+		if result.err == nil {
+			redraw = r.State.RenamePlant(command.id, command.name)
+			changed = true
+		}
+	case commandRegister:
+		var plant history.Plant
+		plant, result.err = r.History.RegisterPlant(command.ctx, command.id, command.name, command.cadence, r.Now(), command.photo)
+		if result.err == nil {
+			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			changed = true
+			result.id = plant.ID
+		}
+	case commandSchedule:
+		var plant history.Plant
+		plant, result.err = r.History.SetSchedule(command.ctx, command.id, command.cadence, r.Now())
+		if result.err == nil {
+			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			changed = true
+		}
+	case commandWater:
+		var plant history.Plant
+		plant, result.err = r.History.ConfirmWatering(command.ctx, command.id, r.Now())
+		if result.err == nil {
+			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			changed = true
+		}
+	case commandPhoto:
+		var plant history.Plant
+		if command.photo == nil {
+			result.err = fmt.Errorf("photo is required")
+			break
+		}
+		plant, result.err = r.History.ReplacePhoto(command.ctx, command.id, *command.photo)
+		if result.err == nil {
+			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			changed = true
+		}
+	default:
+		result.err = fmt.Errorf("unknown plant command %d", command.kind)
+	}
+	return redraw, changed, result
+}
+
+func toCorePlant(plant history.Plant) core.Plant {
+	converted := core.Plant{
+		ID:               plant.ID,
+		Name:             plant.Name,
+		FirstSeen:        plant.FirstSeen,
+		LastSeen:         plant.LastSeen,
+		Cadence:          plant.Cadence,
+		NextWateringDate: plant.NextWateringDate,
+		HasPhoto:         plant.HasPhoto,
+	}
+	if plant.Latest != nil {
+		converted.Latest = &core.Reading{PlantID: plant.ID, Raw: plant.Latest.Raw, Percentage: plant.Latest.Percentage, ObservedAt: plant.Latest.ObservedAt}
+	}
+	return converted
 }
