@@ -93,3 +93,7 @@ mise run build-image
 ## Development workflow
 
 Development in this repository uses OpenSpec and small, focused changes so implementation, tests, and specifications stay synchronized. Contributors and coding agents should inspect `openspec/specs/`, `mise tasks`, and the relevant code and tests for detailed behavior rather than expanding this README with internal documentation.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
