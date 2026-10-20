@@ -1,3 +1,5 @@
 /build/
 /work/
 /soil-monitor
+__pycache__/
+*.pyc
