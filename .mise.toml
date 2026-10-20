@@ -4,7 +4,6 @@ go = "1.25"
 pipx = "latest"
 "pipx:esptool" = "latest"
 python = "3.12"
-shellcheck = "0.11.0"
 
 [tasks.default]
 description = "List available project tasks"
@@ -29,9 +28,13 @@ description = "Build a static Linux AMD64 binary"
 env = { GOOS = "linux", GOARCH = "amd64", CGO_ENABLED = "0" }
 run = "go build -trimpath -o build/soil-monitor-linux-amd64 ./cmd/soil-monitor"
 
+[tasks.build-image]
+description = "Build the container image locally (soil-monitor:dev) without pushing"
+run = "docker build -t soil-monitor:dev ."
+
 [tasks.test]
-description = "Run Go, release, and bootstrap workflow tests"
-run = ["go test ./...", "python firmware/money-tree/test_payload.py", "./scripts/release_test.sh", "./scripts/bootstrap_test.sh"]
+description = "Run Go and firmware payload tests"
+run = ["go test ./...", "python firmware/money-tree/test_payload.py"]
 
 [tasks.fmt]
 description = "Format Go source files"
@@ -40,17 +43,3 @@ run = "gofmt -w $(find . -name '*.go' -not -path './openspec/*')"
 [tasks.vet]
 description = "Run Go static analysis"
 run = "go vet ./..."
-
-[tasks.lint-shell]
-description = "Lint repository shell scripts"
-run = "shellcheck scripts/*.sh"
-
-[tasks.release]
-description = "Validate, build, and release to a supported Debian host"
-depends = ["test", "vet", "lint-shell", "build-linux-arm64", "build-linux-amd64"]
-run = "./scripts/release.sh"
-
-[tasks.bootstrap]
-description = "Provision a fresh Raspberry Pi or generic Debian host and release the appliance"
-depends = ["test", "vet", "lint-shell", "build-linux-arm64", "build-linux-amd64"]
-run = "./scripts/bootstrap.sh"

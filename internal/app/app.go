@@ -137,8 +137,6 @@ func copyValidatedPhoto(photo *history.Photo) (*history.Photo, error) {
 
 type Runner struct {
 	State    *core.State
-	Display  core.Display
-	Buttons  core.ButtonSource
 	MQTT     core.MQTTSource
 	Web      core.WebServer
 	History  history.Repository
@@ -150,9 +148,6 @@ type Runner struct {
 func (r *Runner) Run(ctx context.Context) (runErr error) {
 	if r.State == nil || r.MQTT == nil || r.History == nil {
 		return fmt.Errorf("state, history, and MQTT adapters are required")
-	}
-	if (r.Display == nil) != (r.Buttons == nil) {
-		return fmt.Errorf("display and buttons must either both be configured or both be omitted")
 	}
 	if r.Logger == nil {
 		r.Logger = slog.Default()
@@ -173,19 +168,8 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 		}
 		runErr = errors.Join(runErr, r.MQTT.Close())
 		runErr = errors.Join(runErr, r.History.Close())
-		if r.Buttons != nil {
-			runErr = errors.Join(runErr, r.Buttons.Close())
-		}
-		if r.Display != nil {
-			runErr = errors.Join(runErr, r.Display.Close())
-		}
 	}()
 
-	if r.Display != nil {
-		if err := r.Display.Render(r.State.View()); err != nil {
-			return fmt.Errorf("render startup view: %w", err)
-		}
-	}
 	if err := r.MQTT.Start(runCtx); err != nil {
 		return fmt.Errorf("start MQTT: %w", err)
 	}
@@ -197,10 +181,6 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 		webStarted = true
 	}
 
-	var buttonEvents <-chan core.Button
-	if r.Buttons != nil {
-		buttonEvents = r.Buttons.Events()
-	}
 	mqttEvents := r.MQTT.Events()
 	var commands <-chan plantCommand
 	if r.Commands != nil {
@@ -216,42 +196,17 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 				return fmt.Errorf("web server stopped unexpectedly")
 			}
 			return fmt.Errorf("web server: %w", webErr)
-		case button, ok := <-buttonEvents:
-			if !ok {
-				buttonEvents = nil
-				continue
-			}
-			redraw := true
-			switch button {
-			case core.ButtonPrevious:
-				redraw = r.State.Previous()
-			case core.ButtonNext:
-				redraw = r.State.Next()
-			case core.ButtonReserved:
-				redraw = false
-			default:
-				r.Logger.Warn("ignored unknown button", "button", button)
-				redraw = false
-			}
-			if redraw && r.Display != nil {
-				if err := r.Display.Render(r.State.View()); err != nil {
-					return fmt.Errorf("render button update: %w", err)
-				}
-			}
-			if redraw && r.Web != nil {
-				r.Web.Notify(r.State.Snapshot())
-			}
 		case event, ok := <-mqttEvents:
 			if !ok {
 				mqttEvents = nil
 				continue
 			}
-			redraw := false
+			changed := false
 			switch event.Kind {
 			case core.MQTTConnected:
-				redraw = r.State.SetConnected(true)
+				changed = r.State.SetConnected(true)
 			case core.MQTTDisconnected:
-				redraw = r.State.SetConnected(false)
+				changed = r.State.SetConnected(false)
 			case core.MQTTMessage:
 				reading, err := core.ParseReading(event.Topic, event.Payload, r.Now())
 				if err != nil {
@@ -263,28 +218,18 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 					r.Logger.Warn("failed to persist MQTT message", "topic", event.Topic, "error", err)
 					break
 				}
-				redraw = r.State.ApplyReading(reading)
+				changed = r.State.ApplyReading(reading)
 			case core.MQTTError:
 				r.Logger.Warn("MQTT adapter error", "error", event.Err)
 			default:
 				r.Logger.Warn("ignored unknown MQTT event", "kind", event.Kind)
 			}
-			if redraw && r.Display != nil {
-				if err := r.Display.Render(r.State.View()); err != nil {
-					return fmt.Errorf("render MQTT update: %w", err)
-				}
-			}
-			if redraw && r.Web != nil {
+			if changed && r.Web != nil {
 				r.Web.Notify(r.State.Snapshot())
 			}
 		case command := <-commands:
-			redraw, changed, result := r.applyCommand(command)
+			changed, result := r.applyCommand(command)
 			command.result <- result
-			if redraw && r.Display != nil {
-				if err := r.Display.Render(r.State.View()); err != nil {
-					return fmt.Errorf("render plant command update: %w", err)
-				}
-			}
 			if changed && r.Web != nil {
 				r.Web.Notify(r.State.Snapshot())
 			}
@@ -292,19 +237,19 @@ func (r *Runner) Run(ctx context.Context) (runErr error) {
 	}
 }
 
-func (r *Runner) applyCommand(command plantCommand) (redraw, changed bool, result commandResult) {
+func (r *Runner) applyCommand(command plantCommand) (changed bool, result commandResult) {
 	switch command.kind {
 	case commandRename:
 		result.err = r.History.RenamePlant(command.ctx, command.id, command.name)
 		if result.err == nil {
-			redraw = r.State.RenamePlant(command.id, command.name)
+			r.State.RenamePlant(command.id, command.name)
 			changed = true
 		}
 	case commandRegister:
 		var plant history.Plant
 		plant, result.err = r.History.RegisterPlant(command.ctx, command.id, command.name, command.cadence, r.Now(), command.photo)
 		if result.err == nil {
-			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			r.State.ApplyPlant(toCorePlant(plant))
 			changed = true
 			result.id = plant.ID
 		}
@@ -312,14 +257,14 @@ func (r *Runner) applyCommand(command plantCommand) (redraw, changed bool, resul
 		var plant history.Plant
 		plant, result.err = r.History.SetSchedule(command.ctx, command.id, command.cadence, r.Now())
 		if result.err == nil {
-			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			r.State.ApplyPlant(toCorePlant(plant))
 			changed = true
 		}
 	case commandWater:
 		var plant history.Plant
 		plant, result.err = r.History.ConfirmWatering(command.ctx, command.id, r.Now())
 		if result.err == nil {
-			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			r.State.ApplyPlant(toCorePlant(plant))
 			changed = true
 		}
 	case commandPhoto:
@@ -330,13 +275,13 @@ func (r *Runner) applyCommand(command plantCommand) (redraw, changed bool, resul
 		}
 		plant, result.err = r.History.ReplacePhoto(command.ctx, command.id, *command.photo)
 		if result.err == nil {
-			redraw = r.State.ApplyPlant(toCorePlant(plant))
+			r.State.ApplyPlant(toCorePlant(plant))
 			changed = true
 		}
 	default:
 		result.err = fmt.Errorf("unknown plant command %d", command.kind)
 	}
-	return redraw, changed, result
+	return changed, result
 }
 
 func toCorePlant(plant history.Plant) core.Plant {

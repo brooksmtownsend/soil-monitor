@@ -23,27 +23,21 @@ func newTestState(t *testing.T) *State {
 	return state
 }
 
-func TestEmptyStateAndDynamicNavigation(t *testing.T) {
+func TestEmptyStateAndDynamicDiscovery(t *testing.T) {
 	state, err := NewState(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view := state.View(); view.HasPlant || view.Total != 0 || state.Next() || state.Previous() {
-		t.Fatalf("unexpected empty state: %#v", view)
+	if snapshot := state.Snapshot(); len(snapshot.Plants) != 0 {
+		t.Fatalf("unexpected empty state: %#v", snapshot)
 	}
 	if !state.ApplyReading(Reading{PlantID: "money-tree", Raw: 32000, Percentage: 47, ObservedAt: testTime}) {
-		t.Fatal("first reading did not request redraw")
-	}
-	if view := state.View(); !view.HasPlant || view.PlantName != "money-tree" || view.Position != 1 || view.Total != 1 {
-		t.Fatalf("unexpected first plant: %#v", view)
+		t.Fatal("first reading did not report a change")
 	}
 	state.ApplyReading(Reading{PlantID: "pothos", Raw: 33000, Percentage: 51, ObservedAt: testTime.Add(time.Minute)})
-	if view := state.View(); view.PlantID != "money-tree" || view.Total != 2 {
-		t.Fatalf("new plant changed selection: %#v", view)
-	}
-	state.Previous()
-	if view := state.View(); view.PlantID != "pothos" || view.Position != 2 {
-		t.Fatalf("previous did not wrap: %#v", view)
+	snapshot := state.Snapshot()
+	if len(snapshot.Plants) != 2 || snapshot.Plants[0].ID != "money-tree" || snapshot.Plants[1].ID != "pothos" || snapshot.Plants[1].Latest.Percentage != 51 {
+		t.Fatalf("unexpected discovered plants: %#v", snapshot)
 	}
 }
 
@@ -57,7 +51,7 @@ func TestRestoredOrderAndSnapshotsAreCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := state.Snapshot()
-	if len(snapshot.Plants) != 3 || snapshot.Plants[0].ID != "aloe" || snapshot.Plants[1].ID != "basil" || snapshot.Plants[2].ID != "zebra" || snapshot.SelectedPlantID != "aloe" {
+	if len(snapshot.Plants) != 3 || snapshot.Plants[0].ID != "aloe" || snapshot.Plants[1].ID != "basil" || snapshot.Plants[2].ID != "zebra" {
 		t.Fatalf("unexpected restored order: %#v", snapshot)
 	}
 	snapshot.Plants[0].Name = "changed"
@@ -78,8 +72,8 @@ func TestApplyRegisteredPlantAndThenReading(t *testing.T) {
 	if !state.ApplyPlant(registered) {
 		t.Fatal("first registered plant did not request redraw")
 	}
-	if view := state.View(); !view.HasPlant || view.PlantName != "Money Tree" || view.Latest != nil || view.Total != 1 {
-		t.Fatalf("registered view = %#v", view)
+	if first, ok := state.Plant("money-tree"); !ok || first.Name != "Money Tree" || first.Latest != nil {
+		t.Fatalf("registered plant = %#v, %v", first, ok)
 	}
 	reading := Reading{PlantID: registered.ID, Raw: 32000, Percentage: 47, ObservedAt: registeredAt.Add(time.Hour)}
 	state.ApplyReading(reading)
@@ -88,8 +82,8 @@ func TestApplyRegisteredPlantAndThenReading(t *testing.T) {
 		t.Fatalf("registered plant after reading = %#v, %v", plant, ok)
 	}
 	state.ApplyPlant(Plant{ID: "pothos", Name: "Pothos", FirstSeen: registeredAt.Add(time.Minute), LastSeen: registeredAt.Add(time.Minute), Cadence: CadenceAsNeeded})
-	if view := state.View(); view.PlantID != "money-tree" || view.Total != 2 {
-		t.Fatalf("later registration changed selection: %#v", view)
+	if got := state.Snapshot().Plants; len(got) != 2 || got[0].ID != "money-tree" || got[1].ID != "pothos" {
+		t.Fatalf("later registration changed order: %#v", got)
 	}
 }
 
@@ -116,13 +110,16 @@ func TestParseReading(t *testing.T) {
 
 func TestRenameAndConnection(t *testing.T) {
 	state := newTestState(t)
-	if !state.RenamePlant("money-tree", "New Name") || state.View().PlantName != "New Name" {
-		t.Fatalf("rename failed: %#v", state.View())
+	if renamed, ok := state.Plant("money-tree"); !ok || !state.RenamePlant("money-tree", "New Name") {
+		t.Fatalf("rename failed: %#v", renamed)
+	}
+	if renamed, _ := state.Plant("money-tree"); renamed.Name != "New Name" {
+		t.Fatalf("rename failed: %#v", renamed)
 	}
 	if state.RenamePlant("unknown", "Unknown") {
 		t.Fatal("unknown plant renamed")
 	}
-	if !state.SetConnected(true) || !state.View().Connected || state.SetConnected(true) {
+	if !state.SetConnected(true) || !state.Snapshot().Connected || state.SetConnected(true) {
 		t.Fatal("connection transition failed")
 	}
 }
@@ -150,7 +147,6 @@ func TestStateConcurrentSnapshotsAndUpdates(t *testing.T) {
 				id := []string{"aloe", "basil", "cactus"}[(i+offset)%3]
 				state.ApplyReading(Reading{PlantID: id, Raw: i, Percentage: i % 101, ObservedAt: testTime.Add(time.Duration(i) * time.Second)})
 				state.SetConnected(i%2 == 0)
-				state.Next()
 				state.RenamePlant(id, strings.ToUpper(id))
 			}
 		}(worker)
@@ -161,7 +157,6 @@ func TestStateConcurrentSnapshotsAndUpdates(t *testing.T) {
 			defer workers.Done()
 			for i := 0; i < 500; i++ {
 				_ = state.Snapshot()
-				_ = state.View()
 				_, _ = state.Plant("aloe")
 			}
 		}()

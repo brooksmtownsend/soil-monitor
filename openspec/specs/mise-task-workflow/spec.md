@@ -1,8 +1,9 @@
 # mise-task-workflow Specification
 
 ## Purpose
-TBD - created by archiving change convert-makefile-to-mise-tasks. Update Purpose after archive.
+Define the supported mise tasks for building, testing, formatting, vetting, and building the container image of the soil monitor.
 ## Requirements
+
 ### Requirement: Discoverable default task
 The project SHALL define a default `mise` task that displays the available project tasks and their descriptions without building, testing, formatting, or otherwise modifying project files.
 
@@ -61,7 +62,7 @@ The project SHALL document `mise run` as the supported interface for routine dev
 - **AND** no Make installation or Makefile is required
 
 ### Requirement: Supported static Linux build tasks
-The project SHALL provide discoverable mise build tasks for static Linux ARM64 and AMD64 soil-monitor binaries with trimmed source paths. The existing `build-pi` workflow SHALL remain available as the Raspberry Pi-compatible ARM64 entry point.
+The project SHALL provide discoverable mise build tasks for static Linux ARM64 and AMD64 soil-monitor binaries with trimmed source paths. The existing `build-pi` workflow SHALL remain available as the Raspberry Pi-compatible ARM64 entry point, and these artifacts SHALL be the inputs to the container image build.
 
 #### Scenario: Build Linux ARM64 artifact
 - **WHEN** a contributor runs the documented Linux ARM64 build task or `build-pi`
@@ -71,14 +72,9 @@ The project SHALL provide discoverable mise build tasks for static Linux ARM64 a
 - **WHEN** a contributor runs the documented Linux AMD64 build task
 - **THEN** Go builds `./cmd/soil-monitor` with `GOOS=linux`, `GOARCH=amd64`, and `CGO_ENABLED=0` and writes the documented AMD64 artifact
 
-### Requirement: Architecture-aware deployment tasks
-The `release` and `bootstrap` mise tasks SHALL validate and build every supported Linux deployment artifact required for remote architecture selection before transferring or changing remote files, and their descriptions SHALL describe supported Debian targets rather than only Raspberry Pi targets.
+### Requirement: Container image build task
+The project SHALL provide a discoverable `mise` task that builds the container image locally without pushing it.
 
 #### Scenario: Contributor lists tasks
 - **WHEN** a contributor runs `mise run`
-- **THEN** the build, release, and bootstrap descriptions identify the supported Linux/Debian workflows and the Raspberry Pi-compatible path
-
-#### Scenario: Deployment build fails
-- **WHEN** either supported deployment artifact cannot be built
-- **THEN** release or bootstrap exits before any remote file is transferred or changed
-
+- **THEN** the image build task is listed with a description

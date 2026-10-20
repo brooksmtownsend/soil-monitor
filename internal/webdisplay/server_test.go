@@ -792,8 +792,9 @@ func TestRenameRoutes(t *testing.T) {
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/plants/money-tree" || state.View().PlantName != "Money Tree" {
-		t.Fatalf("rename response=%d location=%q view=%#v", response.Code, response.Header().Get("Location"), state.View())
+	renamed, _ := state.Plant("money-tree")
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/plants/money-tree" || renamed.Name != "Money Tree" {
+		t.Fatalf("rename response=%d location=%q plant=%#v", response.Code, response.Header().Get("Location"), renamed)
 	}
 
 	for _, tt := range []struct {

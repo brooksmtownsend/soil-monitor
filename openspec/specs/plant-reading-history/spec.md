@@ -74,13 +74,13 @@ The application SHALL create or migrate the configured SQLite database to the re
 - **WHEN** the configured database path cannot be opened or migrated
 - **THEN** startup exits non-zero before MQTT, HTTP, or hardware adapters begin normal operation
 
-### Requirement: Persistent data lifecycle
-The deployed service SHALL keep the database in a writable persistent state directory owned for the unprivileged service account, and bootstrap and routine release operations MUST NOT overwrite or remove an existing database.
+### Requirement: Persistent data volume
+The deployed service SHALL keep the database on a writable persistent volume that outlives individual containers, and image upgrades or restarts MUST NOT overwrite or remove an existing database.
 
-#### Scenario: Fresh host is bootstrapped
-- **WHEN** bootstrap prepares a host without an application state directory
-- **THEN** it creates a persistent directory writable by `soilmonitor` without pre-populating plant data
+#### Scenario: Fresh deployment
+- **WHEN** the application starts against an empty persistent volume
+- **THEN** it creates the database without pre-populated plant data
 
-#### Scenario: Routine release is performed
-- **WHEN** a new application binary and deployment assets are released
-- **THEN** the existing SQLite database remains byte-for-byte outside the transferred release artifacts
+#### Scenario: Image is upgraded
+- **WHEN** a new image version replaces the running one
+- **THEN** the existing SQLite database on the volume is preserved and changed only by normal application initialization

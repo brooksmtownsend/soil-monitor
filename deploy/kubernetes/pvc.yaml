@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: soil-monitor-data
+spec:
+  # Single writer: the SQLite database must live on block storage, not NFS.
+  accessModes: [ReadWriteOncePod]
+  resources:
+    requests:
+      storage: 1Gi

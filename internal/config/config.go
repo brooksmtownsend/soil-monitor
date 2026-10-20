@@ -11,37 +11,28 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
 	defaultClientID     = "soil-monitor"
-	defaultSPIPort      = "/dev/spidev0.0"
 	defaultHTTPAddr     = ":80"
 	defaultDatabasePath = "/var/lib/soil-monitor/soil-monitor.db"
-	defaultDebounce     = 150 * time.Millisecond
 )
 
 var knownSettings = map[string]struct{}{
-	"SOIL_MQTT_BROKER":        {},
-	"SOIL_MQTT_CLIENT_ID":     {},
-	"SOIL_DATABASE_PATH":      {},
-	"SOIL_PI_HAT_ENABLED":     {},
-	"SOIL_SPI_PORT":           {},
-	"SOIL_BUTTON_DEBOUNCE_MS": {},
-	"SOIL_HTTP_ENABLED":       {},
-	"SOIL_HTTP_ADDR":          {},
+	"SOIL_MQTT_BROKER":    {},
+	"SOIL_MQTT_CLIENT_ID": {},
+	"SOIL_DATABASE_PATH":  {},
+	"SOIL_HTTP_ENABLED":   {},
+	"SOIL_HTTP_ADDR":      {},
 }
 
 type Config struct {
 	BrokerURL    string
 	ClientID     string
 	DatabasePath string
-	PIHatEnabled bool
-	SPIPort      string
 	HTTPEnabled  bool
 	HTTPAddr     string
-	Debounce     time.Duration
 }
 
 // FromEnv preserves the original environment-only entry point.
@@ -70,9 +61,6 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 	brokerURL := values["SOIL_MQTT_BROKER"]
 	clientID := values["SOIL_MQTT_CLIENT_ID"]
 	databasePath := values["SOIL_DATABASE_PATH"]
-	piHatValue := values["SOIL_PI_HAT_ENABLED"]
-	spiPort := values["SOIL_SPI_PORT"]
-	debounceValue := values["SOIL_BUTTON_DEBOUNCE_MS"]
 	httpValue := values["SOIL_HTTP_ENABLED"]
 	httpAddr := values["SOIL_HTTP_ADDR"]
 
@@ -83,9 +71,6 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 	fs.StringVar(&brokerURL, "mqtt-broker", brokerURL, "MQTT broker URL (SOIL_MQTT_BROKER; required)")
 	fs.StringVar(&clientID, "mqtt-client-id", clientID, "MQTT client identifier (SOIL_MQTT_CLIENT_ID)")
 	fs.StringVar(&databasePath, "database-path", databasePath, "SQLite database path (SOIL_DATABASE_PATH)")
-	fs.StringVar(&piHatValue, "pi-hat", piHatValue, "enable Raspberry Pi HAT display and buttons: true or false (SOIL_PI_HAT_ENABLED)")
-	fs.StringVar(&spiPort, "spi-port", spiPort, "Pi HAT SPI device path (SOIL_SPI_PORT)")
-	fs.StringVar(&debounceValue, "button-debounce-ms", debounceValue, "Pi HAT button debounce in milliseconds (SOIL_BUTTON_DEBOUNCE_MS)")
 	fs.StringVar(&httpValue, "http", httpValue, "enable the embedded HTTP display: true or false (SOIL_HTTP_ENABLED)")
 	fs.StringVar(&httpAddr, "http-addr", httpAddr, "HTTP listen address (SOIL_HTTP_ADDR)")
 	if err := fs.Parse(args); err != nil {
@@ -93,16 +78,6 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 	}
 	if fs.NArg() != 0 {
 		return Config{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " "))
-	}
-	piHatEnabled, err := boolean("SOIL_PI_HAT_ENABLED/--pi-hat", piHatValue)
-	if err != nil {
-		return Config{}, err
-	}
-	debounceMS := int(defaultDebounce / time.Millisecond)
-	if parsedDebounce, parseErr := positiveInteger("SOIL_BUTTON_DEBOUNCE_MS/--button-debounce-ms", debounceValue); parseErr == nil {
-		debounceMS = parsedDebounce
-	} else if piHatEnabled {
-		return Config{}, parseErr
 	}
 	httpEnabled, err := boolean("SOIL_HTTP_ENABLED/--http", httpValue)
 	if err != nil {
@@ -116,11 +91,8 @@ func Load(args, environ []string, output io.Writer) (Config, error) {
 		BrokerURL:    strings.TrimSpace(brokerURL),
 		ClientID:     strings.TrimSpace(clientID),
 		DatabasePath: strings.TrimSpace(databasePath),
-		PIHatEnabled: piHatEnabled,
-		SPIPort:      strings.TrimSpace(spiPort),
 		HTTPEnabled:  httpEnabled,
 		HTTPAddr:     strings.TrimSpace(httpAddr),
-		Debounce:     time.Duration(debounceMS) * time.Millisecond,
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -139,13 +111,10 @@ func helpRequested(args []string) bool {
 
 func defaultValues() map[string]string {
 	return map[string]string{
-		"SOIL_MQTT_CLIENT_ID":     defaultClientID,
-		"SOIL_DATABASE_PATH":      defaultDatabasePath,
-		"SOIL_PI_HAT_ENABLED":     "true",
-		"SOIL_SPI_PORT":           defaultSPIPort,
-		"SOIL_BUTTON_DEBOUNCE_MS": strconv.Itoa(int(defaultDebounce / time.Millisecond)),
-		"SOIL_HTTP_ENABLED":       "true",
-		"SOIL_HTTP_ADDR":          defaultHTTPAddr,
+		"SOIL_MQTT_CLIENT_ID": defaultClientID,
+		"SOIL_DATABASE_PATH":  defaultDatabasePath,
+		"SOIL_HTTP_ENABLED":   "true",
+		"SOIL_HTTP_ADDR":      defaultHTTPAddr,
 	}
 }
 
@@ -234,22 +203,13 @@ func boolean(name, raw string) (bool, error) {
 	return value, nil
 }
 
-func positiveInteger(name, raw string) (int, error) {
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || value < 1 {
-		return 0, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return value, nil
-}
-
 func writeUsage(output io.Writer, fs *flag.FlagSet) {
 	fmt.Fprintln(output, "Usage: soil-monitor [options]")
 	fmt.Fprintln(output, "Configuration precedence: flags > environment > --config file > defaults.")
-	fmt.Fprintln(output, "Defaults: Pi HAT=true, HTTP=true, client ID=soil-monitor, database=/var/lib/soil-monitor/soil-monitor.db, SPI=/dev/spidev0.0, debounce=150ms, HTTP=:80.")
+	fmt.Fprintln(output, "Defaults: HTTP=true, client ID=soil-monitor, database=/var/lib/soil-monitor/soil-monitor.db, HTTP=:80.")
 	fmt.Fprintln(output, "Environment: SOIL_MQTT_BROKER, SOIL_MQTT_CLIENT_ID, SOIL_DATABASE_PATH,")
-	fmt.Fprintln(output, "  SOIL_PI_HAT_ENABLED, SOIL_SPI_PORT, SOIL_BUTTON_DEBOUNCE_MS,")
 	fmt.Fprintln(output, "  SOIL_HTTP_ENABLED, SOIL_HTTP_ADDR.")
-	fmt.Fprintln(output, "Example: SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 SOIL_DATABASE_PATH=./soil-monitor.db soil-monitor --pi-hat=false")
+	fmt.Fprintln(output, "Example: SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 SOIL_DATABASE_PATH=./soil-monitor.db soil-monitor")
 	fmt.Fprintln(output, "Options:")
 	fs.PrintDefaults()
 }
@@ -272,14 +232,6 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DatabasePath) == "" {
 		return fmt.Errorf("SOIL_DATABASE_PATH must not be empty")
-	}
-	if c.PIHatEnabled {
-		if strings.TrimSpace(c.SPIPort) == "" {
-			return fmt.Errorf("SOIL_SPI_PORT must not be empty when Pi HAT support is enabled")
-		}
-		if c.Debounce <= 0 {
-			return fmt.Errorf("button debounce must be positive when Pi HAT support is enabled")
-		}
 	}
 	if c.HTTPEnabled {
 		_, port, err := net.SplitHostPort(c.HTTPAddr)

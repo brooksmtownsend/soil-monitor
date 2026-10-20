@@ -15,33 +15,6 @@ import (
 	"soilmonitor/internal/history"
 )
 
-type fakeDisplay struct {
-	mu     sync.Mutex
-	views  []core.View
-	closed atomic.Bool
-}
-
-func (f *fakeDisplay) Render(view core.View) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.views = append(f.views, view)
-	return nil
-}
-func (f *fakeDisplay) Close() error { f.closed.Store(true); return nil }
-func (f *fakeDisplay) snapshot() []core.View {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]core.View(nil), f.views...)
-}
-
-type fakeButtons struct {
-	events chan core.Button
-	closed atomic.Bool
-}
-
-func (f *fakeButtons) Events() <-chan core.Button { return f.events }
-func (f *fakeButtons) Close() error               { f.closed.Store(true); return nil }
-
 type fakeMQTT struct {
 	events          chan core.MQTTEvent
 	started, closed atomic.Bool
@@ -208,49 +181,43 @@ func (f *fakeHistory) failAppends(err error) {
 	f.appendErr = err
 }
 
-func TestRunnerDiscoversPersistsNavigatesAndRenames(t *testing.T) {
+func TestRunnerDiscoversPersistsAndRenames(t *testing.T) {
 	state, _ := core.NewState(nil)
-	display := &fakeDisplay{}
-	buttons := &fakeButtons{events: make(chan core.Button, 8)}
 	mqtt := &fakeMQTT{events: make(chan core.MQTTEvent, 8)}
 	web := &fakeWeb{}
 	repository := &fakeHistory{}
 	commands := NewCommander()
 	now := time.Date(2026, 8, 24, 16, 0, 0, 0, time.UTC)
-	runner := Runner{State: state, Display: display, Buttons: buttons, MQTT: mqtt, Web: web, History: repository, Commands: commands, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	runner := Runner{State: state, MQTT: mqtt, Web: web, History: repository, Commands: commands, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runner.Run(ctx) }()
-	waitForViews(t, display, 1)
+	waitForCondition(t, func() bool { return mqtt.started.Load() }, "MQTT start")
 	mqtt.events <- core.MQTTEvent{Kind: core.MQTTConnected}
-	waitForViews(t, display, 2)
+	waitForNotifications(t, web, 1)
 	mqtt.events <- core.MQTTEvent{Kind: core.MQTTMessage, Topic: "plants/money-tree/moisture", Payload: []byte(`{"raw":32000,"percentage":47}`)}
-	waitForViews(t, display, 3)
-	if repository.count() != 1 || state.View().Latest == nil || state.View().Latest.Percentage != 47 {
-		t.Fatalf("reading not persisted/projected: count=%d view=%#v", repository.count(), state.View())
+	waitForNotifications(t, web, 2)
+	money, ok := state.Plant("money-tree")
+	if repository.count() != 1 || !ok || money.Latest == nil || money.Latest.Percentage != 47 {
+		t.Fatalf("reading not persisted/projected: count=%d plant=%#v", repository.count(), money)
 	}
 	mqtt.events <- core.MQTTEvent{Kind: core.MQTTMessage, Topic: "plants/pothos/moisture", Payload: []byte(`{"raw":33000,"percentage":72}`)}
-	waitForCondition(t, func() bool { return repository.count() == 2 }, "second persisted reading")
-	if len(display.snapshot()) != 3 {
-		t.Fatal("non-selected plant caused redraw")
-	}
-	buttons.events <- core.ButtonNext
-	waitForViews(t, display, 4)
-	if state.View().PlantID != "pothos" {
-		t.Fatalf("next view = %#v", state.View())
+	waitForNotifications(t, web, 3)
+	if pothos, ok := state.Plant("pothos"); repository.count() != 2 || !ok || pothos.Latest == nil || pothos.Latest.Percentage != 72 {
+		t.Fatalf("second plant not persisted/projected: count=%d plant=%#v", repository.count(), pothos)
 	}
 	if err := commands.RenamePlant(ctx, "pothos", "  Kitchen Pothos  "); err != nil {
 		t.Fatal(err)
 	}
-	waitForViews(t, display, 5)
-	if state.View().PlantName != "Kitchen Pothos" {
-		t.Fatalf("renamed view = %#v", state.View())
+	waitForNotifications(t, web, 4)
+	if pothos, _ := state.Plant("pothos"); pothos.Name != "Kitchen Pothos" {
+		t.Fatalf("renamed plant = %#v", pothos)
 	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if !mqtt.closed.Load() || !buttons.closed.Load() || !display.closed.Load() || !web.stopped.Load() || !repository.closed.Load() {
+	if !mqtt.closed.Load() || !web.stopped.Load() || !repository.closed.Load() {
 		t.Fatal("adapters were not closed")
 	}
 }
@@ -298,7 +265,7 @@ func TestCommanderValidationAndStorageFailure(t *testing.T) {
 	if err := commands.RenamePlant(ctx, "aloe", "Aloe"); !errors.Is(err, history.ErrPlantNotFound) {
 		t.Fatalf("rename error = %v", err)
 	}
-	if state.View().PlantName != "aloe" {
+	if aloe, _ := state.Plant("aloe"); aloe.Name != "aloe" {
 		t.Fatal("failed rename changed state")
 	}
 	cancel()
@@ -448,29 +415,24 @@ func TestRunnerSerializesRegistrationAlongsideMQTT(t *testing.T) {
 
 func TestRunnerReturnsUnexpectedWebFailure(t *testing.T) {
 	state, _ := core.NewState(nil)
-	display := &fakeDisplay{}
-	buttons := &fakeButtons{events: make(chan core.Button)}
 	mqtt := &fakeMQTT{events: make(chan core.MQTTEvent)}
-	err := (&Runner{State: state, Display: display, Buttons: buttons, MQTT: mqtt, Web: &fakeWeb{runErr: errors.New("listen failed")}, History: &fakeHistory{}}).Run(context.Background())
+	err := (&Runner{State: state, MQTT: mqtt, Web: &fakeWeb{runErr: errors.New("listen failed")}, History: &fakeHistory{}}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "web server: listen failed") {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
 
-func TestRunnerRejectsMissingHistoryAndPartialHardware(t *testing.T) {
+func TestRunnerRejectsMissingHistory(t *testing.T) {
 	state, _ := core.NewState(nil)
 	mqtt := &fakeMQTT{events: make(chan core.MQTTEvent)}
 	if err := (&Runner{State: state, MQTT: mqtt}).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "history") {
 		t.Fatalf("error = %v", err)
 	}
-	if err := (&Runner{State: state, MQTT: mqtt, History: &fakeHistory{}, Display: &fakeDisplay{}}).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "display and buttons") {
-		t.Fatalf("error = %v", err)
-	}
 }
 
-func waitForViews(t *testing.T, display *fakeDisplay, count int) {
+func waitForNotifications(t *testing.T, web *fakeWeb, count int64) {
 	t.Helper()
-	waitForCondition(t, func() bool { return len(display.snapshot()) >= count }, "rendered views")
+	waitForCondition(t, func() bool { return web.notifications.Load() >= count }, "web notifications")
 }
 func waitForCondition(t *testing.T, condition func() bool, description string) {
 	t.Helper()
