@@ -1,0 +1,13 @@
+.git
+.claude
+.codex
+.github
+build
+work
+openspec
+firmware
+deploy
+scripts
+README.md
+AGENTS.md
+Dockerfile

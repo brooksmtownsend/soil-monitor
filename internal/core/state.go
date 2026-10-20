@@ -35,16 +35,6 @@ type Plant struct {
 	HasPhoto         bool
 }
 
-type View struct {
-	HasPlant  bool
-	PlantID   string
-	PlantName string
-	Latest    *Reading
-	Position  int
-	Total     int
-	Connected bool
-}
-
 type PlantSnapshot struct {
 	ID               string
 	Name             string
@@ -57,16 +47,14 @@ type PlantSnapshot struct {
 }
 
 type Snapshot struct {
-	Plants          []PlantSnapshot
-	SelectedPlantID string
-	Connected       bool
+	Plants    []PlantSnapshot
+	Connected bool
 }
 
 type State struct {
 	mu        sync.RWMutex
 	plants    []Plant
 	byID      map[string]int
-	selected  int
 	connected bool
 }
 
@@ -107,11 +95,7 @@ func NewState(restored []Plant) (*State, error) {
 		}
 		byID[plants[i].ID] = i
 	}
-	selected := -1
-	if len(plants) > 0 {
-		selected = 0
-	}
-	return &State{plants: plants, byID: byID, selected: selected}, nil
+	return &State{plants: plants, byID: byID}, nil
 }
 
 func ParseReading(topic string, payload []byte, observedAt time.Time) (Reading, error) {
@@ -163,16 +147,6 @@ func NormalizePlantName(name string) (string, error) {
 	return normalized, nil
 }
 
-func (s *State) View() View {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.selected < 0 {
-		return View{Connected: s.connected}
-	}
-	plant := s.plants[s.selected]
-	return View{HasPlant: true, PlantID: plant.ID, PlantName: plantLabel(plant), Latest: copyReading(plant.Latest), Position: s.selected + 1, Total: len(s.plants), Connected: s.connected}
-}
-
 func (s *State) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -180,11 +154,7 @@ func (s *State) Snapshot() Snapshot {
 	for i, plant := range s.plants {
 		plants[i] = snapshotPlant(plant)
 	}
-	selectedID := ""
-	if s.selected >= 0 {
-		selectedID = s.plants[s.selected].ID
-	}
-	return Snapshot{Plants: plants, SelectedPlantID: selectedID, Connected: s.connected}
+	return Snapshot{Plants: plants, Connected: s.connected}
 }
 
 func (s *State) Plant(id string) (PlantSnapshot, bool) {
@@ -198,26 +168,6 @@ func (s *State) Plant(id string) (PlantSnapshot, bool) {
 	return snapshotPlant(plant), true
 }
 
-func (s *State) Previous() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.plants) == 0 {
-		return false
-	}
-	s.selected = (s.selected - 1 + len(s.plants)) % len(s.plants)
-	return true
-}
-
-func (s *State) Next() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.plants) == 0 {
-		return false
-	}
-	s.selected = (s.selected + 1) % len(s.plants)
-	return true
-}
-
 func (s *State) ApplyReading(reading Reading) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,13 +176,10 @@ func (s *State) ApplyReading(reading Reading) bool {
 		index = len(s.plants)
 		s.byID[reading.PlantID] = index
 		s.plants = append(s.plants, Plant{ID: reading.PlantID, FirstSeen: reading.ObservedAt, LastSeen: reading.ObservedAt})
-		if s.selected < 0 {
-			s.selected = 0
-		}
 	}
 	s.plants[index].LastSeen = reading.ObservedAt
 	s.plants[index].Latest = copyReading(&reading)
-	return index == s.selected
+	return true
 }
 
 func (s *State) RenamePlant(id, name string) bool {
@@ -243,7 +190,7 @@ func (s *State) RenamePlant(id, name string) bool {
 		return false
 	}
 	s.plants[index].Name = name
-	return index == s.selected
+	return true
 }
 
 func (s *State) ApplyPlant(plant Plant) bool {
@@ -254,13 +201,10 @@ func (s *State) ApplyPlant(plant Plant) bool {
 		index = len(s.plants)
 		s.byID[plant.ID] = index
 		s.plants = append(s.plants, copyPlant(plant))
-		if s.selected < 0 {
-			s.selected = 0
-		}
-		return index == s.selected
+		return true
 	}
 	s.plants[index] = copyPlant(plant)
-	return index == s.selected
+	return true
 }
 
 func (s *State) SetConnected(connected bool) bool {

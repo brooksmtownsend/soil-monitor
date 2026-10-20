@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/name: soil-monitor
+    includeSelectors: true
+images:
+  - name: ghcr.io/brooksmtownsend/wireless-soil-monitor
+    # Overlays or the GitOps image updater promote versions by changing newTag.
+    newTag: 0.0.0

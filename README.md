@@ -1,92 +1,49 @@
 # Wireless Soil Monitor
 
-A small Go application that discovers MQTT soil-moisture sensors, stores their history locally, and displays any number of plants. It can run as a complete Raspberry Pi 3A+ appliance with the Waveshare 1.3-inch SH1106 OLED HAT, or headlessly on a generic Debian server/LXC with the local web dashboard.
+A small Go application that discovers MQTT soil-moisture sensors, stores their history in SQLite, and serves a local web dashboard for any number of plants. It ships as a minimal, non-root container image, published to GitHub Container Registry by GitHub Actions and rolled out to Kubernetes by GitOps.
 
-The Pi also runs Mosquitto, so the appliance is self-contained: sensor nodes publish readings to the Pi, and the single soil-monitor binary drives both the OLED and dashboard.
+## Deploy
 
-## Quick start
+Every push to `main` publishes `ghcr.io/brooksmtownsend/wireless-soil-monitor:sha-<commit>` for `linux/amd64` and `linux/arm64`; a `vX.Y.Z` tag publishes `X.Y.Z`. Promote a version by changing the image tag in your GitOps repository. A Kustomize base (Deployment, Service, PersistentVolumeClaim) lives in [`deploy/kubernetes/`](deploy/kubernetes/README.md), along with overlay, pull-secret, and database-import instructions.
 
-Start with a 64-bit Raspberry Pi OS/Debian Lite image that already has Wi-Fi, SSH, and a sudo-capable user configured. The default deployment target is `brooks@192.168.1.95`.
-
-For a freshly imaged Pi:
-
-```bash
-mise install
-mise run bootstrap
-```
-
-Bootstrap installs and configures Mosquitto, enables SPI, creates the service account and environment, reboots if necessary, and performs the first application release.
-
-For a systemd-based AMD64 or ARM64 Debian server/LXC without the Pi HAT:
-
-```bash
-SOIL_RELEASE_TARGET=brooks@soil-monitor.local mise run bootstrap -- --pi-hat=false
-```
-
-Generic mode installs the same Mosquitto and soil-monitor services but does not install `raspi-config`, create GPIO/SPI groups, enable SPI, inspect hardware devices, or reboot for hardware activation.
-
-For later application releases:
-
-```bash
-mise run release
-```
-
-Use a different address or hostname with:
-
-```bash
-SOIL_RELEASE_TARGET=brooks@rpi3.local mise run bootstrap
-```
-
-Bootstrap requires the host to already be reachable over SSH with sudo and systemd. It does not configure or recover networking. Mosquitto and the dashboard are intended for a trusted local network and do not provide authentication or TLS. Releases detect ARM64 or AMD64 remotely and select the matching static binary.
+The application needs an MQTT broker, which it does not provide. Set `SOIL_MQTT_BROKER` (for example `tcp://mosquitto:1883`) in your overlay. The broker listener and the dashboard are unauthenticated and unencrypted trusted-network services.
 
 ## Configuration
 
-Bootstrap stores service configuration at:
-
-```text
-/etc/soil-monitor/soil-monitor.env
-```
-
-Bootstrap creates it when missing and preserves its contents on later runs. The default configuration is:
+Configuration is read from `SOIL_*` environment variables. The image defaults are:
 
 ```dotenv
-SOIL_MQTT_BROKER=tcp://127.0.0.1:1883
-SOIL_MQTT_CLIENT_ID=kitchen-soil-display
-SOIL_DATABASE_PATH=/var/lib/soil-monitor/soil-monitor.db
-SOIL_PI_HAT_ENABLED=true
-SOIL_SPI_PORT=/dev/spidev0.0
-SOIL_BUTTON_DEBOUNCE_MS=150
+SOIL_MQTT_CLIENT_ID=soil-monitor
+SOIL_DATABASE_PATH=/data/soil-monitor.db
 SOIL_HTTP_ENABLED=true
-SOIL_HTTP_ADDR=:80
+SOIL_HTTP_ADDR=:8080
 ```
 
-Set `SOIL_PI_HAT_ENABLED=false`
+`SOIL_MQTT_BROKER` is required. Run the image locally with:
 
-The binary can also run directly without any configuration file:
+```bash
+docker run --rm -p 8080:8080 -v soil-data:/data \
+  -e SOIL_MQTT_BROKER=tcp://host.docker.internal:1883 \
+  ghcr.io/brooksmtownsend/wireless-soil-monitor:<tag>
+```
+
+The binary can also run directly:
 
 ```bash
 SOIL_MQTT_BROKER=tcp://127.0.0.1:1883 \
 SOIL_DATABASE_PATH=./soil-monitor.db \
-./build/soil-monitor --pi-hat=false
+SOIL_HTTP_ADDR=:8080 \
+./build/soil-monitor
 ```
 
-Alternatively, pass `--config /path/to/soil-monitor.env`. The file accepts blank lines, `#` comments, and unquoted or single/double-quoted `KEY=VALUE` entries from the documented `SOIL_*` settings; it is parsed as data and does not execute shell expansion. Precedence is command-line flags, process environment, the selected file, then built-in defaults. Run `soil-monitor --help` for every flag and environment mapping.
-
-The systemd environment file is optional to the unit and is preserved byte-for-byte by routine releases. Bootstrap creates it when missing. If it is removed, required variables must instead be injected with a systemd drop-in or another service-manager mechanism.
-
-After editing it, restart the application:
-
-```bash
-sudoedit /etc/soil-monitor/soil-monitor.env
-sudo systemctl restart soil-monitor.service
-```
+Alternatively, pass `--config /path/to/file.env`. The file accepts blank lines, `#` comments, and unquoted or single/double-quoted `KEY=VALUE` entries from the documented `SOIL_*` settings; it is parsed as data and does not execute shell expansion. Precedence is command-line flags, process environment, the selected file, then built-in defaults. Run `soil-monitor --help` for every flag and environment mapping.
 
 ## Dashboard
 
-Open the Pi's port 80 from another device on the same LAN:
+Open the dashboard on port 8080 (or the Service's port 80 in Kubernetes):
 
 ```text
-http://192.168.1.95/
+http://localhost:8080/
 ```
 
 The page shows every registered or MQTT-discovered plant, its optional identifying photo, latest raw value and percentage, and the MQTT connection state. Use **Add plant** or open `/plants/new` to register a plant with a display name, watering schedule, and optional photo before its sensor publishes. The permanent database and MQTT identifier is generated by lowercasing and kebab-casing the name: for example, `Money Tree` becomes `money-tree`. Registration fails when that identifier already belongs to either a registered or discovered plant; later display-name edits do not change it.
@@ -101,41 +58,24 @@ Select a plant to view its display name, photo, next watering date, watering con
 
 Latest values update over the local WebSocket connection without a full-page reload. History remains a server-rendered snapshot and refreshes when a range is selected or the detail page is reloaded. A range can also be bookmarked directly, such as `/plants/money-tree?range=3mo`.
 
-The dashboard's registration, name, schedule, watering, and photo forms change persistent application data. Port 80 remains an unauthenticated trusted-LAN service, so it must not be exposed to an untrusted network.
-
-> **Migration note:** The default HTTP port changed from 8080 to 80 in this release. If your deployment relied on the old default, add `SOIL_HTTP_ADDR=:8080` to `/etc/soil-monitor/soil-monitor.env` to preserve the previous behavior.
-
-Check it from a terminal with:
-
-```bash
-curl -fsS http://192.168.1.95/
-```
+The dashboard's registration, name, schedule, watering, and photo forms change persistent application data. The dashboard is unauthenticated and unencrypted, so it must not be exposed to an untrusted network; put authentication and TLS in front of any Ingress.
 
 ## Publish a test reading
 
 The application subscribes to `plants/+/moisture` and discovers kebab-case plant IDs automatically. A publication using an ID created by web registration updates that existing plant without changing its name, photo, or watering schedule. Payloads are JSON objects with a non-negative integer `raw` reading and an integer `percentage` from `0` through `100`:
 
 ```bash
-mosquitto_pub -h 192.168.1.95 -t plants/money-tree/moisture -m '{"raw":32768,"percentage":47}'
-mosquitto_pub -h 192.168.1.95 -t plants/pothos/moisture -m '{"raw":30100,"percentage":72}'
-mosquitto_pub -h 192.168.1.95 -t plants/snake-plant/moisture -m '{"raw":41000,"percentage":31}'
+mosquitto_pub -h <broker> -t plants/money-tree/moisture -m '{"raw":32768,"percentage":47}'
+mosquitto_pub -h <broker> -t plants/pothos/moisture -m '{"raw":30100,"percentage":72}'
 ```
 
-Use `-r` to retain a reading across application restarts:
+Use `-r` to retain a reading across application restarts.
 
-```bash
-mosquitto_pub -h 192.168.1.95 -r -t plants/money-tree/moisture -m '{"raw":32768,"percentage":47}'
-```
+## Reading history
 
-KEY1 selects the previous plant, KEY2 selects the next plant, and KEY3 is currently reserved.
+SQLite readings, plant metadata, watering events, schedules, and photo bytes are stored at `SOIL_DATABASE_PATH` (`/data/soil-monitor.db` in the image, on the persistent volume). Timestamps record when the monitor receives each reading or watering confirmation in UTC; watering due values are Eastern calendar dates, and moisture-history filtering is calculated from UTC instants even though the dashboard presents them in Eastern Time. Because retained MQTT payloads contain no stable reading ID, reconnecting or restarting can record the retained value as a new observation.
 
-## Reading history and upgrades
-
-SQLite readings, plant metadata, watering events, schedules, and photo bytes are stored at `SOIL_DATABASE_PATH`, defaulting to `/var/lib/soil-monitor/soil-monitor.db`. Timestamps record when the monitor receives each reading or watering confirmation in UTC; watering due values are Eastern calendar dates, and moisture-history filtering is calculated from UTC instants even though the dashboard presents them in Eastern Time. Because retained MQTT payloads contain no stable reading ID, reconnecting or restarting can record the retained value as a new observation.
-
-History and photos are retained without automatic pruning. Monitor the size of `/var/lib/soil-monitor`, especially when uploading large photos, and back up the database while the service is stopped or with SQLite's online backup tooling. Bootstrap preserves an existing database and routine releases never transfer or replace it. The additive care tables remain readable by the prior binary during release rollback; older releases ignore the care data, and a later upgrade exposes it again.
-
-The JSON payload is a breaking protocol change. Upgrade every publisher together with the monitor; the old binary requires integer payloads, while the new binary rejects them. To roll back, restore the previous monitor binary and unit, restore publishers to integer payloads, and leave the SQLite database in place for a later upgrade. Legacy `SOIL_PLANTS` values can remain temporarily for rollback but are ignored by the new binary.
+History and photos are retained without automatic pruning. Monitor volume usage, especially when uploading large photos, and snapshot the volume before upgrades. The monitor must run as a single replica.
 
 ## Local development and testing
 
@@ -143,35 +83,12 @@ Developer tools and routine commands are managed by `mise`:
 
 ```bash
 mise install
-mise run
-```
-
-Run the automated suite and static analysis without Raspberry Pi hardware:
-
-```bash
+mise run          # list tasks
 mise run test
 mise run vet
-mise run lint-shell
-```
-
-Build for the local machine, ARM64 Linux, or AMD64 Linux:
-
-```bash
 mise run build
-mise run build-pi
-mise run build-linux-arm64
-mise run build-linux-amd64
+mise run build-image
 ```
-
-Preview deployment without contacting the Pi:
-
-```bash
-SOIL_RELEASE_DRY_RUN=1 mise run release
-SOIL_BOOTSTRAP_DRY_RUN=1 mise run bootstrap
-SOIL_BOOTSTRAP_DRY_RUN=1 mise run bootstrap -- --pi-hat=false
-```
-
-Dry runs validate local inputs and artifacts but do not connect to the host. Failed activation automatically restores `.previous` binary and unit backups when both exist. For manual rollback, reinstall `/usr/local/bin/soil-monitor.previous` and `/etc/systemd/system/soil-monitor.service.previous` to their unsuffixed paths, then run `sudo systemctl daemon-reload` and restart `soil-monitor.service`.
 
 ## Development workflow
 

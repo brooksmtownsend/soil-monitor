@@ -6,21 +6,6 @@ Define the embedded local HTTP display, including dynamic plant status, durable 
 
 ## Requirements
 
-### Requirement: Single-binary HTTP display
-The soil-monitor process SHALL optionally serve its web display from the same Go binary that handles MQTT and any enabled OLED and button adapters, without requiring external web assets or an additional runtime service. HTTP enablement SHALL be independent of Pi HAT enablement.
-
-#### Scenario: All displays are enabled
-- **WHEN** the process starts with valid Pi HAT, MQTT, and HTTP configuration
-- **THEN** the OLED workflow and HTTP listener run within the same process
-
-#### Scenario: Headless web mode starts
-- **WHEN** the process starts with Pi HAT support disabled and HTTP enabled
-- **THEN** MQTT and the HTTP listener run without accessing Pi hardware
-
-#### Scenario: HTTP is disabled
-- **WHEN** the process starts with HTTP disabled
-- **THEN** it does not create a network listener for the web display
-
 ### Requirement: Plant status page
 The root page SHALL render valid HTML containing every registered or MQTT-discovered plant's assigned display name or identifier, identifying photo when present, latest raw reading and moisture percentage, reading time, and the current MQTT connection state. Each plant SHALL link to its detail page, and the page SHALL provide a link to plant registration.
 
@@ -106,7 +91,7 @@ The application SHALL independently configure HTTP enablement and `SOIL_HTTP_ADD
 - **THEN** HTTP address validation does not prevent startup
 
 ### Requirement: Read-only web interface
-The web display SHALL expose no operation that changes moisture readings, OLED selection, runtime configuration, MQTT topics, or existing plant identifiers. Its state-changing operations SHALL be limited to registering a plant, assigning or replacing a display name, assigning or replacing a watering cadence, confirming watering, and uploading or replacing a plant photo.
+The web display SHALL expose no operation that changes moisture readings, runtime configuration, MQTT topics, or existing plant identifiers. Its state-changing operations SHALL be limited to registering a plant, assigning or replacing a display name, assigning or replacing a watering cadence, confirming watering, and uploading or replacing a plant photo.
 
 #### Scenario: Unsupported root method is requested
 - **WHEN** a client sends a non-read method to the root page
@@ -139,7 +124,7 @@ HTTP requests SHALL observe race-free copied state, plant care fields, and histo
 When enabled, the HTTP server SHALL start and stop with the application context, shut down gracefully within a bounded interval, and surface unexpected listener or serving failures as application errors. When disabled, application lifecycle SHALL NOT require a web adapter.
 
 #### Scenario: Enabled service is stopped
-- **WHEN** systemd sends the application its termination signal while HTTP is enabled
+- **WHEN** the runtime sends the application its termination signal while HTTP is enabled
 - **THEN** the HTTP listener stops accepting requests and active responses receive a bounded graceful-shutdown opportunity
 
 #### Scenario: Listener cannot bind
@@ -151,7 +136,7 @@ When enabled, the HTTP server SHALL start and stop with the application context,
 - **THEN** it shuts down normally without waiting for or closing a web listener
 
 ### Requirement: Web display documentation
-The project SHALL document HTTP enablement, the address setting, default URL, trusted-LAN mutation assumption, displayed fields, plant registration and naming, photo compatibility, watering schedules and confirmation, history charts, and verification procedure for both Pi and headless Debian deployments.
+The project SHALL document HTTP enablement, the address setting, default URL, trusted-LAN mutation assumption, displayed fields, plant registration and naming, photo compatibility, watering schedules and confirmation, history charts, and verification procedure for the container deployment.
 
 #### Scenario: Operator verifies the page
 - **WHEN** an operator follows the deployment documentation with HTTP enabled
@@ -302,3 +287,14 @@ The plant detail page SHALL organize current moisture, display-name editing, pho
 #### Scenario: Historical readings exceed the visible tile area
 - **WHEN** the moisture-history table is wider or taller than the immediately visible content area
 - **THEN** the history tile keeps the page layout intact and allows the user to reach the chart, table columns, and later rows without clipping content
+
+### Requirement: Hardware-free web display
+The soil-monitor process SHALL optionally serve its web display from the same Go binary that handles MQTT, without requiring external web assets or an additional runtime service. The process SHALL NOT access GPIO, SPI, or other Raspberry Pi hardware.
+
+#### Scenario: Web mode starts
+- **WHEN** the process starts with valid MQTT and HTTP configuration
+- **THEN** MQTT and the HTTP listener run within the same process without accessing hardware devices
+
+#### Scenario: HTTP listener disabled
+- **WHEN** the process starts with HTTP disabled
+- **THEN** it does not create a network listener for the web display

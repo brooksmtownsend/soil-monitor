@@ -8,7 +8,7 @@ Before changing behavior, inspect these sources in order:
 
 1. `openspec/specs/` for the current product and operational contracts.
 2. `openspec/changes/` for any active delta specs, designs, and task lists.
-3. `mise tasks` for the supported build, test, bootstrap, and release commands.
+3. `mise tasks` for the supported build, test, and container image commands.
 4. The relevant code and tests for implementation details and established patterns.
 
 Do not use the README as the complete technical specification. If documentation and implementation disagree, identify the mismatch and update the appropriate OpenSpec change rather than silently choosing one.
@@ -18,34 +18,31 @@ Do not use the README as the complete technical specification. If documentation 
 - `cmd/soil-monitor/`: composition root and process lifecycle.
 - `internal/config/`: environment parsing and validation.
 - `internal/core/`: state, snapshots, domain events, and adapter interfaces.
-- `internal/app/`: serialized application coordination across display, buttons, MQTT, and HTTP.
+- `internal/app/`: serialized application coordination across MQTT, history, and HTTP.
 - `internal/mqttadapter/`: Paho MQTT connection, reconnect, subscription, and event delivery.
-- `internal/hardware/`: Raspberry Pi GPIO, SPI, SH1106 OLED, and HAT buttons.
-- `internal/display/`: testable 128x64 OLED layout.
 - `internal/webdisplay/`: embedded, read-only standard-library HTTP dashboard.
-- `deploy/`: systemd, environment, Mosquitto, and sudoers assets.
-- `scripts/`: local release/bootstrap orchestration, privileged Pi setup, and shell fixtures.
+- `deploy/kubernetes/`: Kustomize base (Deployment, Service, PVC) consumed by the GitOps repository.
+- `Dockerfile`: multi-stage build into a distroless, non-root image.
+- `.github/workflows/`: CI that tests, builds, and publishes the multi-arch image to GHCR.
 - `openspec/specs/`: synchronized main specifications.
 - `openspec/changes/`: active and archived change artifacts.
 
 ## Important system contracts
 
-- The deliverable is one static Go binary targeting Linux ARM64 on a Raspberry Pi 3A+.
-- The supported display is the Waveshare 1.3-inch SH1106 OLED HAT in factory four-wire SPI mode using `/dev/spidev0.0`.
+- The deliverable is a minimal distroless container image (`linux/amd64` and `linux/arm64`) running one static Go binary as non-root UID 65532. CI publishes it to GHCR; the owner's GitOps repository deploys it to Kubernetes. There is no host bootstrap or SSH release path, and no OLED/HAT hardware support.
 - The application discovers any number of kebab-case plant IDs through `plants/+/moisture`; display names are assigned later in the browser.
 - Moisture payloads are JSON objects with non-negative integer `raw` and `percentage` from `0` through `100`; malformed and out-of-range messages preserve prior state.
-- The Pi-local broker defaults to `tcp://127.0.0.1:1883`. Its port 1883 listener and the port 8080 dashboard are trusted-LAN services without authentication or TLS.
+- The MQTT broker is external to this project and set through `SOIL_MQTT_BROKER`. The broker and the dashboard (port 8080 in the image) are trusted-network services without authentication or TLS.
 - The dashboard is embedded, server-rendered, and has no external assets or JavaScript dependency. Its only mutation assigns a discovered plant's display name.
 - Plant metadata and reading history are stored in local SQLite; retained MQTT publications can add another receipt-time observation after restart.
-- `soilmonitor` is the unprivileged service account. `/etc/soil-monitor/soil-monitor.env` is host-managed, `root:soilmonitor`, mode `0640`.
-- Routine releases must preserve the environment file byte-for-byte. Bootstrap may create it when missing and normalize its metadata without replacing existing content.
+- The SQLite database lives on a single-writer persistent volume at `/data`; the Deployment must stay at one replica with `Recreate` rollout. Configuration is environment variables only.
 
 Read the corresponding main spec before modifying any of these contracts:
 
 - `plant-moisture-display`
 - `local-web-display`
-- `rpi-host-bootstrap`
-- `rpi-release-workflow`
+- `runtime-configuration`
+- `container-image-build`, `container-image-publish`, `kubernetes-gitops-deployment` (after this change is archived)
 - `mise-task-workflow`
 
 ## OpenSpec development workflow
@@ -70,30 +67,28 @@ Install developer tools through `mise`; do not introduce a second tool installer
 ```bash
 mise install
 mise run                 # list tasks
-mise run test            # Go, release, and bootstrap fixtures
+mise run test            # Go and firmware payload tests
 mise run vet             # Go static analysis
-mise run lint-shell      # ShellCheck for scripts
 mise run fmt             # format Go files
 mise run build           # local binary
 mise run build-pi        # static Linux ARM64 binary
+mise run build-image     # local container image (no push)
 ```
 
-Before completing a normal code change, run at least the directly affected tests plus `mise run vet`. Changes to deployment shell scripts also require `mise run lint-shell` and the release/bootstrap fixtures included by `mise run test`. Concurrency changes require `go test -race ./...` where the local platform supports it.
+Before completing a normal code change, run at least the directly affected tests plus `mise run vet`. Changes to the Dockerfile require `mise run build-image` and a run of the image; changes to `deploy/kubernetes/` require `kubectl kustomize deploy/kubernetes` to render. Concurrency changes require `go test -race ./...` where the local platform supports it.
 
 ## Deployment boundaries
 
-- `mise run bootstrap` mutates a fresh remote host, installs packages and services, and may reboot it.
-- `mise run release` transfers artifacts, installs root-owned files through a narrow sudo policy, restarts the service, and can roll back installed artifacts.
-- Never run live bootstrap or release merely to test a local code change. Use `SOIL_BOOTSTRAP_DRY_RUN=1` or `SOIL_RELEASE_DRY_RUN=1` unless the user explicitly authorizes the remote operation.
-- Preserve SSH host-key verification. Do not add options that bypass it.
-- Do not broaden the sudo policy casually. Keep commands, run-as users, paths, ownership, and modes explicit and update fixtures alongside policy changes.
-- Do not edit Wi-Fi configuration as part of bootstrap or release; network reachability and SSH are prerequisites.
+- Releases are published by `.github/workflows/image.yml` on pushes to `main` and version tags; do not push images or tags manually, and never push to the registry or apply manifests to a cluster merely to test a local change.
+- Keep workflow permissions minimal (`contents: read`; `packages: write` only on the publishing job) and use `GITHUB_TOKEN`, not long-lived credentials.
+- Keep the pod hardened: non-root, read-only root filesystem, no added capabilities, one replica, `Recreate` strategy.
+- The base contains no secrets or environment-specific values; those belong to the GitOps repository's overlays.
 
 ## Change discipline
 
 - Preserve existing behavior unless the active delta spec changes it.
 - Prefer standard-library Go for small features, especially HTTP, before adding dependencies.
 - Keep state mutations centralized through `core.State` and `app.Runner`; HTTP readers use copied snapshots.
-- Maintain hardware-independent unit tests and fake adapters so most verification runs off-Pi.
+- Maintain unit tests and fake adapters so verification runs without a broker or cluster.
 - Keep changes minimal in a dirty worktree and do not rewrite unrelated user work.
 - Update README only when a human quickstart or user-facing operation changes. Put agent instructions here and normative behavior in OpenSpec.

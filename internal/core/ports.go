@@ -2,14 +2,6 @@ package core
 
 import "context"
 
-type Button int
-
-const (
-	ButtonPrevious Button = iota
-	ButtonNext
-	ButtonReserved
-)
-
 type MQTTEventKind int
 
 const (
@@ -24,16 +16,6 @@ type MQTTEvent struct {
 	Topic   string
 	Payload []byte
 	Err     error
-}
-
-type Display interface {
-	Render(View) error
-	Close() error
-}
-
-type ButtonSource interface {
-	Events() <-chan Button
-	Close() error
 }
 
 type MQTTSource interface {
